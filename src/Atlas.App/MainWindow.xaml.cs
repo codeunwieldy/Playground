@@ -47,6 +47,14 @@ public sealed partial class MainWindow : Window
             "Use the timeline to restore a single quarantined item or reason about a full batch rollback path.",
             "Ask Atlas to show the last duplicate cleanup batch or find a quarantined document to restore",
             "Preview undo"),
+        ["history"] = new(
+            typeof(HistoryPage),
+            "ATLAS MEMORY",
+            "Keep the latest command understanding, safety posture, and recovery story in one readable timeline.",
+            "This workspace starts with session-backed memory today and is intentionally shaped to absorb persisted history summaries from the service next.",
+            "Use Atlas Memory to understand what the shell believes happened, what safety posture is active, and which recovery artifacts are currently available.",
+            "Ask Atlas to recall the latest plan, prompt trace, undo checkpoint, or session activity",
+            "Preview undo"),
         ["settings"] = new(
             typeof(SettingsPage),
             "POLICY STUDIO",
@@ -111,6 +119,9 @@ public sealed partial class MainWindow : Window
                 await session.AnalyzeOptimizationAsync();
                 break;
             case "undo":
+                await session.PreviewUndoAsync();
+                break;
+            case "history":
                 await session.PreviewUndoAsync();
                 break;
             case "settings":
@@ -238,6 +249,7 @@ public sealed partial class MainWindow : Window
             "plans" => PlansItem,
             "optimization" => OptimizationItem,
             "undo" => UndoItem,
+            "history" => HistoryItem,
             "settings" => SettingsItem,
             _ => null
         };

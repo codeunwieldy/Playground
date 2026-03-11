@@ -49,6 +49,11 @@
                         <SymbolIcon Symbol="Undo" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="HistoryItem" Tag="history" Content="Atlas Memory">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="History" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="SettingsItem" Tag="settings" Content="Policy Studio">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Setting" />
@@ -146,6 +151,11 @@
                                 <AppBarButton Click="OnQuickNavigateClick" Tag="undo" Label="Undo">
                                     <AppBarButton.Icon>
                                         <SymbolIcon Symbol="Undo" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton Click="OnQuickNavigateClick" Tag="history" Label="Memory">
+                                    <AppBarButton.Icon>
+                                        <SymbolIcon Symbol="History" />
                                     </AppBarButton.Icon>
                                 </AppBarButton>
                             </CommandBar>
