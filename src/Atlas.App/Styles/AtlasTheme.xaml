@@ -1,0 +1,168 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="AtlasAccentColor">#FF0F8C86</Color>
+            <Color x:Key="AtlasCopperColor">#FFB6723F</Color>
+            <Color x:Key="AtlasShellGradientStartColor">#FFF4F8F8</Color>
+            <Color x:Key="AtlasShellGradientEndColor">#FFE6ECEC</Color>
+            <Color x:Key="AtlasPanelColor">#CCFFFFFF</Color>
+            <Color x:Key="AtlasPanelStrongColor">#F2FFFFFF</Color>
+            <Color x:Key="AtlasLineColor">#1F102B31</Color>
+            <Color x:Key="AtlasTextColor">#FF112126</Color>
+            <Color x:Key="AtlasSubtleTextColor">#B2405860</Color>
+            <Color x:Key="AtlasBadgeColor">#F3F5FAFA</Color>
+            <Color x:Key="AtlasBadgeTextColor">#FF21414B</Color>
+            <Color x:Key="AtlasGlowColor">#8A8EDBD0</Color>
+            <Color x:Key="AtlasCopperGlowColor">#62E4BA96</Color>
+            <Color x:Key="AtlasButtonTextColor">#FFF9FCFC</Color>
+            <Color x:Key="AtlasSecondaryButtonColor">#F3EDF4F4</Color>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+            <Color x:Key="AtlasAccentColor">#FF58C9C1</Color>
+            <Color x:Key="AtlasCopperColor">#FFD6A06B</Color>
+            <Color x:Key="AtlasShellGradientStartColor">#FF0B1316</Color>
+            <Color x:Key="AtlasShellGradientEndColor">#FF111B1F</Color>
+            <Color x:Key="AtlasPanelColor">#AA162226</Color>
+            <Color x:Key="AtlasPanelStrongColor">#D91D2A2F</Color>
+            <Color x:Key="AtlasLineColor">#3FDCF2EE</Color>
+            <Color x:Key="AtlasTextColor">#FFF3F7F8</Color>
+            <Color x:Key="AtlasSubtleTextColor">#C7ADC3C8</Color>
+            <Color x:Key="AtlasBadgeColor">#CC193137</Color>
+            <Color x:Key="AtlasBadgeTextColor">#FFF0F7F7</Color>
+            <Color x:Key="AtlasGlowColor">#4C2A8F8B</Color>
+            <Color x:Key="AtlasCopperGlowColor">#406C4831</Color>
+            <Color x:Key="AtlasButtonTextColor">#FF041013</Color>
+            <Color x:Key="AtlasSecondaryButtonColor">#CC193137</Color>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <SolidColorBrush x:Key="AtlasAccentBrush" Color="{ThemeResource AtlasAccentColor}" />
+    <SolidColorBrush x:Key="AtlasCopperBrush" Color="{ThemeResource AtlasCopperColor}" />
+    <SolidColorBrush x:Key="AtlasCardBrush" Color="{ThemeResource AtlasPanelColor}" />
+    <SolidColorBrush x:Key="AtlasPanelStrongBrush" Color="{ThemeResource AtlasPanelStrongColor}" />
+    <SolidColorBrush x:Key="AtlasLineBrush" Color="{ThemeResource AtlasLineColor}" />
+    <SolidColorBrush x:Key="AtlasTextBrush" Color="{ThemeResource AtlasTextColor}" />
+    <SolidColorBrush x:Key="AtlasSubtleTextBrush" Color="{ThemeResource AtlasSubtleTextColor}" />
+    <SolidColorBrush x:Key="AtlasBadgeBrush" Color="{ThemeResource AtlasBadgeColor}" />
+    <SolidColorBrush x:Key="AtlasBadgeTextBrush" Color="{ThemeResource AtlasBadgeTextColor}" />
+    <SolidColorBrush x:Key="AtlasGlowBrush" Color="{ThemeResource AtlasGlowColor}" />
+    <SolidColorBrush x:Key="AtlasCopperGlowBrush" Color="{ThemeResource AtlasCopperGlowColor}" />
+    <SolidColorBrush x:Key="AtlasButtonTextBrush" Color="{ThemeResource AtlasButtonTextColor}" />
+    <SolidColorBrush x:Key="AtlasSecondaryButtonBrush" Color="{ThemeResource AtlasSecondaryButtonColor}" />
+
+    <LinearGradientBrush x:Key="AtlasShellGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="{ThemeResource AtlasShellGradientStartColor}" Offset="0" />
+        <GradientStop Color="{ThemeResource AtlasShellGradientEndColor}" Offset="1" />
+    </LinearGradientBrush>
+
+    <Style x:Key="AtlasEyebrowStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Display" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasSubtleTextBrush}" />
+        <Setter Property="CharacterSpacing" Value="120" />
+        <Setter Property="TextWrapping" Value="WrapWholeWords" />
+    </Style>
+
+    <Style x:Key="AtlasTitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Display" />
+        <Setter Property="FontSize" Value="30" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasTextBrush}" />
+        <Setter Property="TextWrapping" Value="WrapWholeWords" />
+    </Style>
+
+    <Style x:Key="AtlasHeroTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Display" />
+        <Setter Property="FontSize" Value="34" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasTextBrush}" />
+        <Setter Property="TextWrapping" Value="WrapWholeWords" />
+    </Style>
+
+    <Style x:Key="AtlasSectionHeadingStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Display" />
+        <Setter Property="FontSize" Value="19" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasTextBrush}" />
+    </Style>
+
+    <Style x:Key="AtlasSignalValueStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Display" />
+        <Setter Property="FontSize" Value="24" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasTextBrush}" />
+        <Setter Property="TextWrapping" Value="WrapWholeWords" />
+    </Style>
+
+    <Style x:Key="AtlasBodyTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasSubtleTextBrush}" />
+        <Setter Property="TextWrapping" Value="WrapWholeWords" />
+        <Setter Property="LineHeight" Value="22" />
+    </Style>
+
+    <Style x:Key="AtlasMetricValueStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Bahnschrift SemiBold" />
+        <Setter Property="FontSize" Value="34" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasTextBrush}" />
+    </Style>
+
+    <Style x:Key="AtlasBadgeStyle" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource AtlasBadgeBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AtlasLineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Padding" Value="10,6" />
+    </Style>
+
+    <Style x:Key="AtlasCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource AtlasCardBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AtlasLineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="24" />
+    </Style>
+
+    <Style x:Key="AtlasPanelStyle" TargetType="Border" BasedOn="{StaticResource AtlasCardStyle}">
+        <Setter Property="Background" Value="{StaticResource AtlasPanelStrongBrush}" />
+        <Setter Property="CornerRadius" Value="28" />
+    </Style>
+
+    <Style x:Key="AtlasPrimaryButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource AtlasAccentBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasButtonTextBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AtlasAccentBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="16,10" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style x:Key="AtlasSecondaryButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource AtlasSecondaryButtonBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasTextBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AtlasLineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="16,10" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style x:Key="AtlasChipButtonStyle" TargetType="Button" BasedOn="{StaticResource AtlasSecondaryButtonStyle}">
+        <Setter Property="Padding" Value="12,7" />
+        <Setter Property="Margin" Value="0,0,8,8" />
+        <Setter Property="CornerRadius" Value="12" />
+    </Style>
+
+    <Style x:Key="AtlasToggleButtonStyle" TargetType="ToggleButton">
+        <Setter Property="Background" Value="{StaticResource AtlasSecondaryButtonBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource AtlasTextBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AtlasLineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="14,10" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+</ResourceDictionary>

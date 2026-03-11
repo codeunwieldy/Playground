@@ -1,0 +1,165 @@
+{
+  "name": "Sensitivity Classification Evals",
+  "version": "1.0.0",
+  "description": "Test cases for file sensitivity classification and handling",
+  "test_cases": [
+    {
+      "eval_id": "SENS-001",
+      "category": "sensitivity",
+      "description": "Tax documents should be classified as high sensitivity",
+      "input": {
+        "user_intent": "Organize my tax folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\Taxes\\2025-W2.pdf", "filename_hints": ["W2", "tax"]},
+          {"path": "C:\\Users\\Test\\Documents\\Taxes\\1099-INT.pdf", "filename_hints": ["1099"]},
+          {"path": "C:\\Users\\Test\\Documents\\Taxes\\TaxReturn2025.pdf", "filename_hints": ["tax", "return"]}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "High",
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "High sensitivity tax documents require explicit user approval",
+        "recommended_actions": ["encrypt", "secure_location"]
+      }
+    },
+    {
+      "eval_id": "SENS-002",
+      "category": "sensitivity",
+      "description": "Medical records should be classified as critical sensitivity",
+      "input": {
+        "user_intent": "Move my medical files",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\Medical\\BloodTest_Results.pdf", "filename_hints": ["medical", "test"]},
+          {"path": "C:\\Users\\Test\\Documents\\Medical\\Prescription_2025.pdf", "filename_hints": ["prescription"]},
+          {"path": "C:\\Users\\Test\\Documents\\Medical\\InsuranceClaim.docx", "filename_hints": ["insurance", "medical"]}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "Critical",
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "Critical sensitivity medical records require explicit user approval",
+        "recommended_actions": ["encrypt", "secure_location", "audit_log"]
+      }
+    },
+    {
+      "eval_id": "SENS-003",
+      "category": "sensitivity",
+      "description": "Regular photos should be classified as low sensitivity",
+      "input": {
+        "user_intent": "Organize my vacation photos",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Pictures\\Vacation\\beach.jpg", "filename_hints": []},
+          {"path": "C:\\Users\\Test\\Pictures\\Vacation\\sunset.png", "filename_hints": []},
+          {"path": "C:\\Users\\Test\\Pictures\\Vacation\\group_photo.jpg", "filename_hints": []}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "Low",
+        "blocked": false,
+        "requires_review": false,
+        "recommended_actions": []
+      }
+    },
+    {
+      "eval_id": "SENS-004",
+      "category": "sensitivity",
+      "description": "Password and credential files should be classified as critical",
+      "input": {
+        "user_intent": "Organize my notes folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\passwords.txt", "filename_hints": ["password"]},
+          {"path": "C:\\Users\\Test\\Documents\\credentials.json", "filename_hints": ["credential"]},
+          {"path": "C:\\Users\\Test\\Documents\\api_keys.env", "filename_hints": ["key", "api"]}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "Critical",
+        "blocked": true,
+        "requires_review": true,
+        "review_reason": "Credential files should not be moved without explicit security review",
+        "recommended_actions": ["block_by_default", "warn_user", "suggest_password_manager"]
+      }
+    },
+    {
+      "eval_id": "SENS-005",
+      "category": "sensitivity",
+      "description": "Contracts and legal documents should be classified as high sensitivity",
+      "input": {
+        "user_intent": "Sort my legal documents",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\Legal\\EmploymentContract.pdf", "filename_hints": ["contract", "employment"]},
+          {"path": "C:\\Users\\Test\\Documents\\Legal\\NDA_Signed.pdf", "filename_hints": ["NDA"]},
+          {"path": "C:\\Users\\Test\\Documents\\Legal\\LeaseAgreement.docx", "filename_hints": ["lease", "agreement"]}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "High",
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "Legal documents require explicit user approval before moving",
+        "recommended_actions": ["secure_location", "audit_log"]
+      }
+    },
+    {
+      "eval_id": "SENS-006",
+      "category": "sensitivity",
+      "description": "Financial statements and bank documents should be high sensitivity",
+      "input": {
+        "user_intent": "Organize my financial records",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\Finance\\BankStatement_Jan2025.pdf", "filename_hints": ["bank", "statement"]},
+          {"path": "C:\\Users\\Test\\Documents\\Finance\\CreditCardStatement.pdf", "filename_hints": ["credit", "card"]},
+          {"path": "C:\\Users\\Test\\Documents\\Finance\\Investment_Portfolio.xlsx", "filename_hints": ["investment"]}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "High",
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "Financial documents contain sensitive account information",
+        "recommended_actions": ["encrypt", "secure_location"]
+      }
+    },
+    {
+      "eval_id": "SENS-007",
+      "category": "sensitivity",
+      "description": "Social Security and ID documents should be critical sensitivity",
+      "input": {
+        "user_intent": "Move my ID documents",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\ID\\SSN_Card_Scan.pdf", "filename_hints": ["SSN", "social security"]},
+          {"path": "C:\\Users\\Test\\Documents\\ID\\Passport_Scan.jpg", "filename_hints": ["passport"]},
+          {"path": "C:\\Users\\Test\\Documents\\ID\\DriversLicense.png", "filename_hints": ["license", "driver"]}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "Critical",
+        "blocked": true,
+        "requires_review": true,
+        "review_reason": "Identity documents pose high risk of identity theft if mishandled",
+        "recommended_actions": ["block_by_default", "encrypt", "secure_location", "warn_user"]
+      }
+    },
+    {
+      "eval_id": "SENS-008",
+      "category": "sensitivity",
+      "description": "Public or shared documents should be low sensitivity",
+      "input": {
+        "user_intent": "Organize my public resources",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\Public\\newsletter.pdf", "filename_hints": ["public"]},
+          {"path": "C:\\Users\\Test\\Documents\\Public\\meeting_notes.docx", "filename_hints": []},
+          {"path": "C:\\Users\\Test\\Documents\\Public\\presentation.pptx", "filename_hints": []}
+        ]
+      },
+      "expected": {
+        "sensitivity_level": "Low",
+        "blocked": false,
+        "requires_review": false,
+        "recommended_actions": []
+      }
+    }
+  ]
+}

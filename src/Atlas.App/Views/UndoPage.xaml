@@ -1,0 +1,124 @@
+<Page
+    x:Class="Atlas.App.Views.UndoPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer>
+        <StackPanel Spacing="20" Padding="28,22,28,32">
+            <StackPanel.ChildrenTransitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition />
+                </TransitionCollection>
+            </StackPanel.ChildrenTransitions>
+
+            <Border Style="{StaticResource AtlasCardStyle}" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="RECOVERY TIMELINE" />
+                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding UndoSummary}" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Click="OnPreviewUndoClick" Style="{StaticResource AtlasSecondaryButtonStyle}" Content="Preview undo" IsEnabled="{Binding CanPreviewUndo}" />
+                        <Button Click="OnExecuteUndoClick" Style="{StaticResource AtlasPrimaryButtonStyle}" Content="Execute through service" IsEnabled="{Binding CanExecuteUndo}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <ScrollViewer HorizontalScrollMode="Enabled"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollMode="Disabled"
+                          VerticalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding UndoMetrics}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="20" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="280" Padding="18" Style="{StaticResource AtlasCardStyle}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
+                                    <TextBlock Style="{StaticResource AtlasMetricValueStyle}" Text="{Binding Value}" />
+                                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <ScrollViewer HorizontalScrollMode="Enabled"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollMode="Disabled"
+                          VerticalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding UndoSignals}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="20" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
+                                    <TextBlock Style="{StaticResource AtlasSignalValueStyle}" Text="{Binding Value}" />
+                                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource AtlasCardStyle}" Padding="24">
+                    <StackPanel Spacing="12">
+                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="BATCH HISTORY" />
+                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Rollback batches" />
+                        <ItemsControl ItemsSource="{Binding UndoBatches}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,0,0,12" Spacing="3">
+                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Timestamp}" />
+                                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" />
+                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource AtlasCardStyle}" Padding="24">
+                    <StackPanel Spacing="12">
+                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="QUARANTINE ITEMS" />
+                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Restorable items" />
+                        <ItemsControl ItemsSource="{Binding QuarantineEntries}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,0,0,12" Spacing="3">
+                                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Name}" />
+                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding OriginalPath}" TextWrapping="Wrap" />
+                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Style="{StaticResource AtlasCardStyle}" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="CHECKPOINT NOTES" />
+                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Recovery commentary" />
+                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding UndoNotesText}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

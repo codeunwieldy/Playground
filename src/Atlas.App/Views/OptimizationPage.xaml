@@ -1,0 +1,67 @@
+<Page
+    x:Class="Atlas.App.Views.OptimizationPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer>
+        <StackPanel Spacing="20" Padding="28,22,28,32">
+            <StackPanel.ChildrenTransitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition />
+                </TransitionCollection>
+            </StackPanel.ChildrenTransitions>
+
+            <Border Style="{StaticResource AtlasCardStyle}" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="SAFE OPTIMIZATION" />
+                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding OptimizationSummary}" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="Atlas auto-fixes only curated low-risk items. Everything else stays recommendation-first with evidence and rollback guidance." TextWrapping="Wrap" />
+                    <Button Click="OnAnalyzeOptimizationClick" Style="{StaticResource AtlasPrimaryButtonStyle}" Content="Analyze optimization" />
+                </StackPanel>
+            </Border>
+
+            <ScrollViewer HorizontalScrollMode="Enabled"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollMode="Disabled"
+                          VerticalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding OptimizationMetrics}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="20" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="300" Padding="18" Style="{StaticResource AtlasCardStyle}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
+                                    <TextBlock Style="{StaticResource AtlasMetricValueStyle}" Text="{Binding Value}" />
+                                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <ItemsControl ItemsSource="{Binding OptimizationFindings}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,0,0,12" Padding="20" Style="{StaticResource AtlasCardStyle}">
+                            <StackPanel Spacing="8">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Kind}" />
+                                    <Border Style="{StaticResource AtlasBadgeStyle}">
+                                        <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="{Binding Status}" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Target}" TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Evidence}" TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding RollbackPlan}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

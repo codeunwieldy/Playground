@@ -1,0 +1,141 @@
+{
+  "name": "Organization Categorization Evals",
+  "version": "1.0.0",
+  "description": "Test cases for file organization and categorization logic",
+  "test_cases": [
+    {
+      "eval_id": "ORG-001",
+      "category": "organization",
+      "description": "Test correct categorization of document files (.docx, .pdf, .xlsx)",
+      "input": {
+        "user_intent": "Organize my documents folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\report.docx", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Documents\\invoice.pdf", "sensitivity": "Medium"},
+          {"path": "C:\\Users\\Test\\Documents\\budget.xlsx", "sensitivity": "Medium"}
+        ]
+      },
+      "expected": {
+        "operations_should_include": ["CreateDirectory", "MovePath"],
+        "target_categories": ["Documents"],
+        "blocked": false,
+        "requires_review": false
+      }
+    },
+    {
+      "eval_id": "ORG-002",
+      "category": "organization",
+      "description": "Test correct categorization of media files (.jpg, .mp4, .mp3)",
+      "input": {
+        "user_intent": "Sort my media files into appropriate folders",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Downloads\\vacation.jpg", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Downloads\\birthday.mp4", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Downloads\\podcast.mp3", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "operations_should_include": ["CreateDirectory", "MovePath"],
+        "target_categories": ["Images", "Videos", "Audio"],
+        "blocked": false,
+        "requires_review": false
+      }
+    },
+    {
+      "eval_id": "ORG-003",
+      "category": "organization",
+      "description": "Test handling of code and development files (.cs, .py, .js)",
+      "input": {
+        "user_intent": "Organize my programming projects",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Projects\\app.cs", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Projects\\script.py", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Projects\\index.js", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Projects\\config.json", "sensitivity": "Medium"}
+        ]
+      },
+      "expected": {
+        "operations_should_include": ["CreateDirectory", "MovePath"],
+        "target_categories": ["Code", "Development"],
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "Code files may have project dependencies"
+      }
+    },
+    {
+      "eval_id": "ORG-004",
+      "category": "organization",
+      "description": "Test mixed folder with multiple file types requiring resolution",
+      "input": {
+        "user_intent": "Clean up my Downloads folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Downloads\\report.pdf", "sensitivity": "Medium"},
+          {"path": "C:\\Users\\Test\\Downloads\\photo.png", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Downloads\\song.mp3", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Downloads\\installer.exe", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Downloads\\data.csv", "sensitivity": "Medium"}
+        ]
+      },
+      "expected": {
+        "operations_should_include": ["CreateDirectory", "MovePath"],
+        "target_categories": ["Documents", "Images", "Audio", "Applications", "Data"],
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "Mixed file types require user confirmation for categorization"
+      }
+    },
+    {
+      "eval_id": "ORG-005",
+      "category": "organization",
+      "description": "Test empty folder handling - no files to organize",
+      "input": {
+        "user_intent": "Organize my empty folder",
+        "inventory": []
+      },
+      "expected": {
+        "operations_should_include": [],
+        "blocked": false,
+        "requires_review": false,
+        "message_should_contain": "no files"
+      }
+    },
+    {
+      "eval_id": "ORG-006",
+      "category": "organization",
+      "description": "Test folder containing only subdirectories, no loose files",
+      "input": {
+        "user_intent": "Organize my project folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Projects\\SubFolder1", "type": "directory"},
+          {"path": "C:\\Users\\Test\\Projects\\SubFolder2", "type": "directory"}
+        ]
+      },
+      "expected": {
+        "operations_should_include": [],
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "Only directories found, no loose files to organize"
+      }
+    },
+    {
+      "eval_id": "ORG-007",
+      "category": "organization",
+      "description": "Test files with no extension or unknown extensions",
+      "input": {
+        "user_intent": "Organize miscellaneous files",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Downloads\\README", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Downloads\\Makefile", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Downloads\\data.xyz", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "operations_should_include": ["CreateDirectory", "MovePath"],
+        "target_categories": ["Other", "Uncategorized"],
+        "blocked": false,
+        "requires_review": true,
+        "review_reason": "Unknown file types require user confirmation"
+      }
+    }
+  ]
+}

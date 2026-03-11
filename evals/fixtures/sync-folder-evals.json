@@ -1,0 +1,179 @@
+{
+  "name": "Sync Folder Protection Evals",
+  "version": "1.0.0",
+  "description": "Test cases for detecting and protecting cloud sync folder paths",
+  "test_cases": [
+    {
+      "eval_id": "SYNC-001",
+      "category": "sync_folder_protection",
+      "description": "OneDrive paths should be blocked by default",
+      "input": {
+        "user_intent": "Organize my OneDrive folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\OneDrive\\Documents\\report.docx", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\OneDrive\\Pictures\\photo.jpg", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\OneDrive - Personal\\data.xlsx", "sensitivity": "Medium"}
+        ]
+      },
+      "expected": {
+        "blocked": true,
+        "requires_review": true,
+        "sync_folder_detected": true,
+        "sync_provider": "OneDrive",
+        "operations_should_include": [],
+        "message_should_contain": "cloud sync folder",
+        "recommended_actions": ["warn_user", "require_explicit_consent"]
+      }
+    },
+    {
+      "eval_id": "SYNC-002",
+      "category": "sync_folder_protection",
+      "description": "Dropbox paths should be detected and blocked",
+      "input": {
+        "user_intent": "Clean up my Dropbox",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Dropbox\\Work\\project.pdf", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Dropbox\\Shared\\team_doc.docx", "sensitivity": "Medium"},
+          {"path": "D:\\Dropbox\\Backups\\archive.zip", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "blocked": true,
+        "requires_review": true,
+        "sync_folder_detected": true,
+        "sync_provider": "Dropbox",
+        "operations_should_include": [],
+        "message_should_contain": "cloud sync folder",
+        "recommended_actions": ["warn_user", "require_explicit_consent"]
+      }
+    },
+    {
+      "eval_id": "SYNC-003",
+      "category": "sync_folder_protection",
+      "description": "iCloud Drive path variations should be detected",
+      "input": {
+        "user_intent": "Organize my iCloud files",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\iCloudDrive\\Documents\\notes.txt", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\iCloud Drive\\Photos\\image.png", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Apple\\iCloud Drive\\data.pdf", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "blocked": true,
+        "requires_review": true,
+        "sync_folder_detected": true,
+        "sync_provider": "iCloud",
+        "operations_should_include": [],
+        "message_should_contain": "cloud sync folder",
+        "recommended_actions": ["warn_user", "require_explicit_consent"]
+      }
+    },
+    {
+      "eval_id": "SYNC-004",
+      "category": "sync_folder_protection",
+      "description": "Google Drive paths should be detected and blocked",
+      "input": {
+        "user_intent": "Sort my Google Drive files",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Google Drive\\My Drive\\spreadsheet.xlsx", "sensitivity": "Low"},
+          {"path": "G:\\My Drive\\Documents\\report.docx", "sensitivity": "Medium"},
+          {"path": "C:\\Users\\Test\\GoogleDrive\\Shared\\team_file.pdf", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "blocked": true,
+        "requires_review": true,
+        "sync_folder_detected": true,
+        "sync_provider": "Google Drive",
+        "operations_should_include": [],
+        "message_should_contain": "cloud sync folder",
+        "recommended_actions": ["warn_user", "require_explicit_consent"]
+      }
+    },
+    {
+      "eval_id": "SYNC-005",
+      "category": "sync_folder_protection",
+      "description": "False positive prevention - project named OneDriveBackup should NOT be blocked",
+      "input": {
+        "user_intent": "Organize my backup project folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Projects\\OneDriveBackup\\src\\main.cs", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Projects\\OneDriveBackup\\README.md", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Development\\DropboxClone\\app.py", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "blocked": false,
+        "requires_review": false,
+        "sync_folder_detected": false,
+        "operations_should_include": ["CreateDirectory", "MovePath"],
+        "message_should_contain": null
+      }
+    },
+    {
+      "eval_id": "SYNC-006",
+      "category": "sync_folder_protection",
+      "description": "False positive prevention - documentation mentioning sync services",
+      "input": {
+        "user_intent": "Organize my documentation folder",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Docs\\HowToSetupOneDrive.pdf", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Docs\\Dropbox_vs_GoogleDrive_Comparison.docx", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Docs\\iCloud_Migration_Guide.pdf", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "blocked": false,
+        "requires_review": false,
+        "sync_folder_detected": false,
+        "operations_should_include": ["CreateDirectory", "MovePath"],
+        "message_should_contain": null
+      }
+    },
+    {
+      "eval_id": "SYNC-007",
+      "category": "sync_folder_protection",
+      "description": "Business OneDrive paths with organization name should be detected",
+      "input": {
+        "user_intent": "Clean up my work OneDrive",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\OneDrive - Contoso Corp\\Projects\\budget.xlsx", "sensitivity": "High"},
+          {"path": "C:\\Users\\Test\\OneDrive - ACME Inc\\Contracts\\agreement.pdf", "sensitivity": "High"}
+        ]
+      },
+      "expected": {
+        "blocked": true,
+        "requires_review": true,
+        "sync_folder_detected": true,
+        "sync_provider": "OneDrive Business",
+        "operations_should_include": [],
+        "message_should_contain": "cloud sync folder",
+        "recommended_actions": ["warn_user", "require_explicit_consent", "check_sharing_status"]
+      }
+    },
+    {
+      "eval_id": "SYNC-008",
+      "category": "sync_folder_protection",
+      "description": "Mixed paths with some in sync folders and some not",
+      "input": {
+        "user_intent": "Organize all my documents",
+        "inventory": [
+          {"path": "C:\\Users\\Test\\Documents\\local_report.pdf", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\OneDrive\\synced_report.pdf", "sensitivity": "Low"},
+          {"path": "C:\\Users\\Test\\Desktop\\notes.txt", "sensitivity": "Low"}
+        ]
+      },
+      "expected": {
+        "blocked": false,
+        "requires_review": true,
+        "sync_folder_detected": true,
+        "partial_sync_warning": true,
+        "sync_items": ["C:\\Users\\Test\\OneDrive\\synced_report.pdf"],
+        "safe_items": ["C:\\Users\\Test\\Documents\\local_report.pdf", "C:\\Users\\Test\\Desktop\\notes.txt"],
+        "message_should_contain": "some files are in sync folders",
+        "recommended_actions": ["process_safe_items", "request_consent_for_sync_items"]
+      }
+    }
+  ]
+}

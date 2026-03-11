@@ -1,0 +1,83 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Atlas File Intelligence"
+           Manufacturer="Atlas"
+           Version="0.1.0"
+           UpgradeCode="592fa27a-b478-47e7-a8dc-e443cbacc2f7"
+           Scope="perMachine">
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Handle upgrades and prevent downgrades -->
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of Atlas File Intelligence is already installed."
+                  AllowSameVersionUpgrades="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Atlas File Intelligence" />
+    </StandardDirectory>
+
+    <!-- Start Menu shortcut directory -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AtlasStartMenuFolder" Name="Atlas File Intelligence" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Atlas" Level="1">
+      <ComponentGroupRef Id="AtlasComponents" />
+      <ComponentRef Id="AtlasStartMenuShortcut" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AtlasComponents" Directory="INSTALLFOLDER">
+      <!-- Atlas WinUI Application -->
+      <Component Id="AtlasAppExecutable" Guid="2f806c7e-e52f-4cd2-87a3-f0649b60bff1">
+        <File Id="AtlasAppExe"
+              Source="..\src\Atlas.App\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\Atlas.App.exe"
+              KeyPath="yes" />
+      </Component>
+
+      <!-- Atlas Windows Service -->
+      <Component Id="AtlasServiceExecutable" Guid="b89e8179-d8a1-4cb3-a0c1-59aece4eb642">
+        <File Id="AtlasServiceExe"
+              Source="..\src\Atlas.Service\bin\Release\net8.0\win-x64\Atlas.Service.exe"
+              KeyPath="yes" />
+
+        <!-- Windows Service Installation -->
+        <ServiceInstall Id="AtlasServiceInstall"
+                        Name="AtlasFileIntelligence"
+                        DisplayName="Atlas File Intelligence"
+                        Description="Background service for AI-guided file organization and safe PC optimization. Handles scan, plan execution, quarantine management, and recovery operations."
+                        Type="ownProcess"
+                        Start="auto"
+                        Account="NT AUTHORITY\LocalService"
+                        ErrorControl="normal"
+                        Arguments="" />
+
+        <!-- Service Control: Start on install, stop on uninstall/upgrade -->
+        <ServiceControl Id="AtlasServiceControl"
+                        Name="AtlasFileIntelligence"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+
+      <!-- Configuration file -->
+      <Component Id="AtlasServiceConfig" Guid="c3d9e8a7-f5b2-4e1c-9a8d-7b6c5d4e3f2a">
+        <File Id="AppSettingsJson"
+              Source="..\src\Atlas.Service\appsettings.json"
+              KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Start Menu Shortcut -->
+    <Component Id="AtlasStartMenuShortcut" Directory="AtlasStartMenuFolder" Guid="a1b2c3d4-e5f6-7890-abcd-ef1234567890">
+      <Shortcut Id="AtlasAppShortcut"
+                Name="Atlas File Intelligence"
+                Description="AI-guided file organization and PC optimization"
+                Target="[INSTALLFOLDER]Atlas.App.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveAtlasStartMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Atlas\FileIntelligence" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>

@@ -1,0 +1,14 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Bundle Name="Atlas File Intelligence"
+          Manufacturer="Atlas"
+          Version="0.1.0"
+          UpgradeCode="7e00df84-aeba-4d8d-a9ba-fc10633aad8a">
+    <BootstrapperApplication>
+      <WixStandardBootstrapperApplication Theme="hyperlinkLicense" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <MsiPackage SourceFile="bin\Atlas.Installer.msi" />
+    </Chain>
+  </Bundle>
+</Wix>
