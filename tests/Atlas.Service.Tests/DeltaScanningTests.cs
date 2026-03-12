@@ -1,4 +1,5 @@
 using Atlas.Core.Contracts;
+using Atlas.Core.Planning;
 using Atlas.Core.Policies;
 using Atlas.Core.Scanning;
 using Atlas.Service.Services;
@@ -495,6 +496,22 @@ public sealed class DeltaScanningTests : IDisposable
             detector, _inventoryRepo);
     }
 
+    private RescanOrchestrationWorker CreateWorkerWithProfile(
+        IDeltaSource source, PolicyProfile profile, AtlasServiceOptions? opts = null)
+    {
+        var o = Options.Create(opts ?? new AtlasServiceOptions
+        {
+            EnableRescanOrchestration = true,
+            RescanInterval = TimeSpan.FromSeconds(0),
+            MaxRootsPerCycle = 5
+        });
+        var detector = new DeltaCapabilityDetector([source]);
+        return new RescanOrchestrationWorker(
+            NullLogger<RescanOrchestrationWorker>.Instance,
+            o, profile, new FileScanner(new PathSafetyClassifier()),
+            detector, _inventoryRepo);
+    }
+
     [Fact]
     public async Task Orchestration_IncrementalComposition_WhenBoundedDelta()
     {
@@ -661,6 +678,429 @@ public sealed class DeltaScanningTests : IDisposable
         var latest = sessions[0];
         Assert.Equal("FullRescan", latest.BuildMode);
         Assert.Contains("MaxIncrementalPaths", latest.CompositionNote);
+    }
+
+    // ── Untrusted session / degradation tests (C-018) ────────────────────
+
+    [Fact]
+    public async Task Orchestration_TrustedIncrementalSession_WhenAllPathsResolved()
+    {
+        // Create baseline files.
+        await File.WriteAllTextAsync(Path.Combine(_testRoot, "a.txt"), "aaa");
+        await File.WriteAllTextAsync(Path.Combine(_testRoot, "b.txt"), "bbb");
+
+        // Full rescan to create baseline.
+        var fullWorker = CreateWorker(new ScheduledRescanDeltaSource());
+        await fullWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        // Modify a file.
+        await File.WriteAllTextAsync(Path.Combine(_testRoot, "b.txt"), "bbb-modified");
+
+        // Incremental composition with all paths resolvable.
+        var stub = new StubDeltaSource { NextResult = new DeltaResult
+        {
+            Capability = DeltaCapability.Watcher,
+            HasChanges = true,
+            RequiresFullRescan = false,
+            ChangedPaths = [Path.Combine(_testRoot, "b.txt")],
+            Reason = "1 changed path."
+        }};
+        var incWorker = CreateWorker(stub);
+        await incWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        var latest = (await _inventoryRepo.ListSessionsAsync(1, 0))[0];
+        Assert.Equal("IncrementalComposition", latest.BuildMode);
+        Assert.True(latest.IsTrusted);
+        Assert.DoesNotContain("DEGRADED", latest.CompositionNote);
+    }
+
+    [Fact]
+    public async Task Orchestration_DegradedSession_WhenSomePathsCannotBeInspected()
+    {
+        // Create baseline files — both scannable initially.
+        var fileA = Path.Combine(_testRoot, "a.txt");
+        var protectedDir = Path.Combine(_testRoot, "protected");
+        Directory.CreateDirectory(protectedDir);
+        var fileB = Path.Combine(protectedDir, "b.txt");
+        await File.WriteAllTextAsync(fileA, "aaa");
+        await File.WriteAllTextAsync(fileB, "bbb");
+
+        // Full rescan baseline (no protection yet, so both files are scanned).
+        var baseProfile = new PolicyProfile { ScanRoots = [_testRoot] };
+        var fullWorker = CreateWorkerWithProfile(new ScheduledRescanDeltaSource(), baseProfile);
+        await fullWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        var baseline = (await _inventoryRepo.ListSessionsAsync(1, 0))[0];
+        Assert.Equal(2, baseline.FilesScanned);
+
+        // Now protect the directory containing b.txt.
+        // InspectFile will return null for b.txt even though it exists on disk.
+        var protectedProfile = new PolicyProfile
+        {
+            ScanRoots = [_testRoot],
+            ProtectedPaths = [protectedDir]
+        };
+
+        // Delta says both files changed. a.txt will resolve, b.txt will fail (protected).
+        var stub = new StubDeltaSource { NextResult = new DeltaResult
+        {
+            Capability = DeltaCapability.Watcher,
+            HasChanges = true,
+            RequiresFullRescan = false,
+            ChangedPaths = [fileA, fileB],
+            Reason = "2 changed paths."
+        }};
+        var incWorker = CreateWorkerWithProfile(stub, protectedProfile);
+        await incWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        var latest = (await _inventoryRepo.ListSessionsAsync(1, 0))[0];
+        Assert.Equal("IncrementalComposition", latest.BuildMode);
+        Assert.False(latest.IsTrusted);
+        Assert.Contains("DEGRADED", latest.CompositionNote);
+        Assert.Contains("could not be refreshed", latest.CompositionNote);
+        Assert.Contains("follow-up full rescan", latest.CompositionNote);
+    }
+
+    [Fact]
+    public async Task Orchestration_DegradedNote_RoundTripsThrough_SessionDetailApi()
+    {
+        // Same setup as degraded test above.
+        var fileA = Path.Combine(_testRoot, "a.txt");
+        var protectedDir = Path.Combine(_testRoot, "protected");
+        Directory.CreateDirectory(protectedDir);
+        var fileB = Path.Combine(protectedDir, "b.txt");
+        await File.WriteAllTextAsync(fileA, "aaa");
+        await File.WriteAllTextAsync(fileB, "bbb");
+
+        // Baseline.
+        var baseProfile = new PolicyProfile { ScanRoots = [_testRoot] };
+        var fullWorker = CreateWorkerWithProfile(new ScheduledRescanDeltaSource(), baseProfile);
+        await fullWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        // Protect and compose degraded session.
+        var protectedProfile = new PolicyProfile
+        {
+            ScanRoots = [_testRoot],
+            ProtectedPaths = [protectedDir]
+        };
+        var stub = new StubDeltaSource { NextResult = new DeltaResult
+        {
+            Capability = DeltaCapability.Watcher,
+            HasChanges = true,
+            RequiresFullRescan = false,
+            ChangedPaths = [fileA, fileB],
+            Reason = "2 changed paths."
+        }};
+        var incWorker = CreateWorkerWithProfile(stub, protectedProfile);
+        await incWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        // Verify we can read the session back and provenance is intact.
+        var latest = (await _inventoryRepo.ListSessionsAsync(1, 0))[0];
+        var detail = await _inventoryRepo.GetSessionAsync(latest.SessionId);
+        Assert.NotNull(detail);
+        Assert.False(detail.IsTrusted);
+        Assert.Equal("IncrementalComposition", detail.BuildMode);
+        Assert.Contains("DEGRADED", detail.CompositionNote);
+        Assert.NotEmpty(detail.BaselineSessionId);
+    }
+
+    [Fact]
+    public async Task Orchestration_ForcesFullRescan_WhenTooManyPathsFail()
+    {
+        // Create baseline with one file.
+        var fileA = Path.Combine(_testRoot, "a.txt");
+        await File.WriteAllTextAsync(fileA, "aaa");
+
+        var fullWorker = CreateWorker(new ScheduledRescanDeltaSource());
+        await fullWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        // Create files in a protected directory — these exist on disk but
+        // InspectFile returns null.
+        var protectedDir = Path.Combine(_testRoot, "locked");
+        Directory.CreateDirectory(protectedDir);
+        var protectedFile1 = Path.Combine(protectedDir, "x.txt");
+        var protectedFile2 = Path.Combine(protectedDir, "y.txt");
+        var protectedFile3 = Path.Combine(protectedDir, "z.txt");
+        await File.WriteAllTextAsync(protectedFile1, "xxx");
+        await File.WriteAllTextAsync(protectedFile2, "yyy");
+        await File.WriteAllTextAsync(protectedFile3, "zzz");
+
+        // Delta is 4 paths: 1 resolvable (a.txt) + 3 protected (75% failure rate).
+        // MaxDegradedRatio=0.5 → 75% > 50%, so it should force full rescan.
+        var protectedProfile = new PolicyProfile
+        {
+            ScanRoots = [_testRoot],
+            ProtectedPaths = [protectedDir]
+        };
+        var stub = new StubDeltaSource { NextResult = new DeltaResult
+        {
+            Capability = DeltaCapability.Watcher,
+            HasChanges = true,
+            RequiresFullRescan = false,
+            ChangedPaths = [fileA, protectedFile1, protectedFile2, protectedFile3],
+            Reason = "4 changed paths."
+        }};
+        var incWorker = CreateWorkerWithProfile(stub, protectedProfile, new AtlasServiceOptions
+        {
+            EnableRescanOrchestration = true,
+            RescanInterval = TimeSpan.FromSeconds(0),
+            MaxRootsPerCycle = 5,
+            MaxDegradedRatio = 0.5
+        });
+        await incWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        var sessions = await _inventoryRepo.ListSessionsAsync(10, 0);
+        Assert.Equal(2, sessions.Count);
+        var latest = sessions[0];
+        Assert.Equal("FullRescan", latest.BuildMode);
+        Assert.True(latest.IsTrusted);
+        Assert.Contains("Degraded composition abandoned", latest.CompositionNote);
+    }
+
+    [Fact]
+    public async Task Orchestration_BaselineLinkageTruthful_InDegradedCase()
+    {
+        // Baseline with two files.
+        var fileA = Path.Combine(_testRoot, "a.txt");
+        var protectedDir = Path.Combine(_testRoot, "protected");
+        Directory.CreateDirectory(protectedDir);
+        var fileB = Path.Combine(protectedDir, "b.txt");
+        await File.WriteAllTextAsync(fileA, "aaa");
+        await File.WriteAllTextAsync(fileB, "bbb");
+
+        var baseProfile = new PolicyProfile { ScanRoots = [_testRoot] };
+        var fullWorker = CreateWorkerWithProfile(new ScheduledRescanDeltaSource(), baseProfile);
+        await fullWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        var baseline = (await _inventoryRepo.ListSessionsAsync(1, 0))[0];
+
+        // Protect b.txt's directory and compose a degraded session.
+        var protectedProfile = new PolicyProfile
+        {
+            ScanRoots = [_testRoot],
+            ProtectedPaths = [protectedDir]
+        };
+        var stub = new StubDeltaSource { NextResult = new DeltaResult
+        {
+            Capability = DeltaCapability.UsnJournal,
+            HasChanges = true,
+            RequiresFullRescan = false,
+            ChangedPaths = [fileA, fileB],
+            Reason = "2 changed paths."
+        }};
+        var incWorker = CreateWorkerWithProfile(stub, protectedProfile);
+        await incWorker.RunOrchestrationCycleAsync(CancellationToken.None);
+
+        var latest = (await _inventoryRepo.ListSessionsAsync(1, 0))[0];
+        Assert.False(latest.IsTrusted);
+        Assert.Equal(baseline.SessionId, latest.BaselineSessionId);
+        Assert.Equal("UsnJournal", latest.DeltaSource);
+    }
+
+    [Fact]
+    public void ServiceOptions_MaxDegradedRatio_HasReasonableDefault()
+    {
+        var opts = new AtlasServiceOptions();
+        Assert.Equal(0.5, opts.MaxDegradedRatio);
+    }
+
+    // ── Trust-aware plan gating tests (C-019) ───────────────────────────
+
+    private PlanExecutionService CreateExecutionService(IInventoryRepository inventoryRepo)
+    {
+        var opts = Options.Create(new AtlasServiceOptions
+        {
+            QuarantineFolderName = ".atlas-quarantine-test"
+        });
+        return new PlanExecutionService(
+            new AtlasPolicyEngine(),
+            new RollbackPlanner(),
+            opts,
+            inventoryRepo);
+    }
+
+    [Fact]
+    public async Task Execution_LiveBlocked_WhenLatestSessionDegraded()
+    {
+        // Seed a degraded session.
+        await _inventoryRepo.SaveSessionAsync(new ScanSession
+        {
+            Roots = [_testRoot],
+            IsTrusted = false,
+            BuildMode = "IncrementalComposition",
+            CompositionNote = "DEGRADED: test scenario"
+        });
+
+        var service = CreateExecutionService(_inventoryRepo);
+        var src = Path.Combine(_testRoot, "block-test.txt");
+        await File.WriteAllTextAsync(src, "content");
+
+        var request = new ExecutionRequest
+        {
+            Execute = true,
+            PolicyProfile = new PolicyProfile { MutableRoots = [_testRoot], ScanRoots = [_testRoot] },
+            Batch = new ExecutionBatch
+            {
+                PlanId = "plan-trust-block",
+                Operations =
+                [
+                    new PlanOperation
+                    {
+                        Kind = OperationKind.CreateDirectory,
+                        DestinationPath = Path.Combine(_testRoot, "new-dir")
+                    }
+                ]
+            }
+        };
+
+        var response = await service.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.False(response.Success);
+        Assert.Contains(response.Messages, m => m.Contains("Execution blocked") && m.Contains("IsTrusted=false"));
+    }
+
+    [Fact]
+    public async Task Execution_PreviewAvailable_WhenLatestSessionDegraded()
+    {
+        // Seed a degraded session.
+        await _inventoryRepo.SaveSessionAsync(new ScanSession
+        {
+            Roots = [_testRoot],
+            IsTrusted = false,
+            BuildMode = "IncrementalComposition",
+            CompositionNote = "DEGRADED: test scenario"
+        });
+
+        var service = CreateExecutionService(_inventoryRepo);
+
+        var request = new ExecutionRequest
+        {
+            Execute = false, // dry-run / preview
+            PolicyProfile = new PolicyProfile { MutableRoots = [_testRoot], ScanRoots = [_testRoot] },
+            Batch = new ExecutionBatch
+            {
+                PlanId = "plan-trust-preview",
+                Operations =
+                [
+                    new PlanOperation
+                    {
+                        Kind = OperationKind.CreateDirectory,
+                        DestinationPath = Path.Combine(_testRoot, "preview-dir")
+                    }
+                ]
+            }
+        };
+
+        var response = await service.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.True(response.Success);
+        Assert.Contains(response.Messages, m => m.Contains("Dry run"));
+    }
+
+    [Fact]
+    public async Task Execution_LiveProceeds_WhenLatestSessionTrusted()
+    {
+        // Seed a trusted session.
+        await _inventoryRepo.SaveSessionAsync(new ScanSession
+        {
+            Roots = [_testRoot],
+            IsTrusted = true,
+            BuildMode = "FullRescan"
+        });
+
+        var service = CreateExecutionService(_inventoryRepo);
+
+        var request = new ExecutionRequest
+        {
+            Execute = true,
+            PolicyProfile = new PolicyProfile { MutableRoots = [_testRoot], ScanRoots = [_testRoot] },
+            Batch = new ExecutionBatch
+            {
+                PlanId = "plan-trust-ok",
+                Operations =
+                [
+                    new PlanOperation
+                    {
+                        Kind = OperationKind.CreateDirectory,
+                        DestinationPath = Path.Combine(_testRoot, "trusted-dir")
+                    }
+                ]
+            }
+        };
+
+        var response = await service.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.True(response.Success);
+        Assert.True(Directory.Exists(Path.Combine(_testRoot, "trusted-dir")));
+    }
+
+    [Fact]
+    public async Task Execution_BlockedReason_IsStableAndTruthful()
+    {
+        await _inventoryRepo.SaveSessionAsync(new ScanSession
+        {
+            Roots = [_testRoot],
+            IsTrusted = false,
+            BuildMode = "IncrementalComposition",
+            CompositionNote = "DEGRADED: 1 path failed"
+        });
+
+        var service = CreateExecutionService(_inventoryRepo);
+
+        var request = new ExecutionRequest
+        {
+            Execute = true,
+            PolicyProfile = new PolicyProfile { MutableRoots = [_testRoot], ScanRoots = [_testRoot] },
+            Batch = new ExecutionBatch
+            {
+                PlanId = "plan-reason",
+                Operations =
+                [
+                    new PlanOperation
+                    {
+                        Kind = OperationKind.CreateDirectory,
+                        DestinationPath = Path.Combine(_testRoot, "reason-dir")
+                    }
+                ]
+            }
+        };
+
+        var response = await service.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.False(response.Success);
+        Assert.Single(response.Messages);
+        Assert.Contains("full rescan", response.Messages[0], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Preview/dry-run remains available", response.Messages[0]);
+    }
+
+    [Fact]
+    public async Task Execution_LiveProceeds_WhenNoSessionExists()
+    {
+        // No sessions seeded — empty inventory.
+        var service = CreateExecutionService(_inventoryRepo);
+
+        var request = new ExecutionRequest
+        {
+            Execute = true,
+            PolicyProfile = new PolicyProfile { MutableRoots = [_testRoot], ScanRoots = [_testRoot] },
+            Batch = new ExecutionBatch
+            {
+                PlanId = "plan-no-session",
+                Operations =
+                [
+                    new PlanOperation
+                    {
+                        Kind = OperationKind.CreateDirectory,
+                        DestinationPath = Path.Combine(_testRoot, "no-session-dir")
+                    }
+                ]
+            }
+        };
+
+        var response = await service.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.True(response.Success);
+        Assert.True(Directory.Exists(Path.Combine(_testRoot, "no-session-dir")));
     }
 }
 

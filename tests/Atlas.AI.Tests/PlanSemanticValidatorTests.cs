@@ -87,6 +87,8 @@ public class PlanSemanticValidatorTests
     {
         var response = BuildValidPlan(plan =>
         {
+            plan.RequiresReview = true;
+            plan.RiskSummary.ApprovalRequirement = ApprovalRequirement.Review;
             plan.Operations.Add(new PlanOperation
             {
                 Kind = OperationKind.DeleteToQuarantine,
@@ -435,6 +437,8 @@ public class PlanSemanticValidatorTests
     {
         var response = BuildValidPlan(plan =>
         {
+            plan.RequiresReview = true;
+            plan.RiskSummary.ApprovalRequirement = ApprovalRequirement.Review;
             plan.Operations.Add(new PlanOperation
             {
                 Kind = OperationKind.DeleteToQuarantine,
@@ -457,6 +461,8 @@ public class PlanSemanticValidatorTests
     {
         var response = BuildValidPlan(plan =>
         {
+            plan.RequiresReview = true;
+            plan.RiskSummary.ApprovalRequirement = ApprovalRequirement.Review;
             plan.Operations.Add(new PlanOperation
             {
                 Kind = OperationKind.DeleteToQuarantine,
@@ -471,6 +477,55 @@ public class PlanSemanticValidatorTests
 
         var report = _validator.Validate(response);
         Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void SafeDuplicate_HighSensitivity_Fails()
+    {
+        var response = BuildValidPlan(plan =>
+        {
+            plan.RequiresReview = true;
+            plan.RiskSummary.ApprovalRequirement = ApprovalRequirement.Review;
+            plan.Operations.Add(new PlanOperation
+            {
+                Kind = OperationKind.DeleteToQuarantine,
+                SourcePath = @"C:\Users\Test\Finance\tax-copy.pdf",
+                Description = "Quarantine duplicate.",
+                Confidence = 0.99,
+                Sensitivity = SensitivityLevel.High,
+                MarksSafeDuplicate = true,
+                GroupId = "group-abc123"
+            });
+        });
+
+        var report = _validator.Validate(response);
+        Assert.False(report.IsValid);
+        Assert.Contains(report.Violations, v => v.Contains("requires Low sensitivity", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void DeleteToQuarantine_WithoutReview_Fails()
+    {
+        var response = BuildValidPlan(plan =>
+        {
+            plan.RequiresReview = false;
+            plan.RiskSummary.ApprovalRequirement = ApprovalRequirement.None;
+            plan.Operations.Add(new PlanOperation
+            {
+                Kind = OperationKind.DeleteToQuarantine,
+                SourcePath = @"C:\Users\Test\Downloads\dup.txt",
+                Description = "Quarantine duplicate.",
+                Confidence = 0.99,
+                Sensitivity = SensitivityLevel.Low,
+                MarksSafeDuplicate = true,
+                GroupId = "group-abc123"
+            });
+        });
+
+        var report = _validator.Validate(response);
+        Assert.False(report.IsValid);
+        Assert.Contains(report.Violations, v => v.Contains("DeleteToQuarantine operations but RequiresReview is false", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(report.Violations, v => v.Contains("DeleteToQuarantine operations but ApprovalRequirement is None", StringComparison.OrdinalIgnoreCase));
     }
 
     // ---- Rollback requirement ----

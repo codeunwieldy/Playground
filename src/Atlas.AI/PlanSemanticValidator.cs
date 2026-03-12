@@ -49,6 +49,7 @@ public sealed class PlanSemanticValidator
         ValidateConfidenceAndRiskScores(plan, violations);
         ValidateReviewEscalation(plan, violations);
         ValidateDuplicateDeleteRules(plan.Operations, violations);
+        ValidateDeleteReviewRequirement(plan, violations);
         ValidateRollbackRequirement(plan, violations);
 
         return new PlanValidationReport
@@ -169,25 +170,57 @@ public sealed class PlanSemanticValidator
     }
 
     /// <summary>
-    /// Rule 5: DeleteToQuarantine operations marked as safe duplicates must have a GroupId.
+    /// Rule 5: DeleteToQuarantine operations marked as safe duplicates must have a GroupId and low sensitivity.
     /// </summary>
     private static void ValidateDuplicateDeleteRules(List<PlanOperation> operations, List<string> violations)
     {
         for (var i = 0; i < operations.Count; i++)
         {
             var op = operations[i];
-            if (op.Kind == OperationKind.DeleteToQuarantine
-                && op.MarksSafeDuplicate
-                && string.IsNullOrWhiteSpace(op.GroupId))
+            if (op.Kind != OperationKind.DeleteToQuarantine || !op.MarksSafeDuplicate)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(op.GroupId))
             {
                 violations.Add(
                     $"Operation[{i}] ({op.Kind}): MarksSafeDuplicate is true but GroupId is empty.");
+            }
+
+            if (op.Sensitivity != SensitivityLevel.Low)
+            {
+                violations.Add(
+                    $"Operation[{i}] ({op.Kind}): MarksSafeDuplicate requires Low sensitivity but found {op.Sensitivity}.");
             }
         }
     }
 
     /// <summary>
-    /// Rule 6: Plans containing destructive or move operations must specify a rollback strategy.
+    /// Rule 6: Any delete-to-quarantine operation must force review posture.
+    /// </summary>
+    private static void ValidateDeleteReviewRequirement(PlanGraph plan, List<string> violations)
+    {
+        var hasDeleteOperation = plan.Operations.Any(static op => op.Kind == OperationKind.DeleteToQuarantine);
+
+        if (!hasDeleteOperation)
+        {
+            return;
+        }
+
+        if (!plan.RequiresReview)
+        {
+            violations.Add("Plan contains DeleteToQuarantine operations but RequiresReview is false.");
+        }
+
+        if (plan.RiskSummary is not null && plan.RiskSummary.ApprovalRequirement == ApprovalRequirement.None)
+        {
+            violations.Add("Plan contains DeleteToQuarantine operations but ApprovalRequirement is None.");
+        }
+    }
+
+    /// <summary>
+    /// Rule 7: Plans containing destructive or move operations must specify a rollback strategy.
     /// </summary>
     private static void ValidateRollbackRequirement(PlanGraph plan, List<string> violations)
     {

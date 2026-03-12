@@ -1,12 +1,18 @@
 using System.ComponentModel;
+using System.Numerics;
 using Atlas.App.Services;
 using Atlas.App.Views;
 using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Windows.UI.ViewManagement;
+using Windows.Graphics;
+using WinRT.Interop;
 
 namespace Atlas.App;
 
@@ -27,7 +33,7 @@ public sealed partial class MainWindow : Window
             typeof(PlansPage),
             "PLAN REVIEW",
             "Compare the proposed structure against the current filesystem before you move a byte.",
-            "Use this space to inspect operation diffs, escalation triggers, and rollback posture before an execution batch is even eligible.",
+            "Use this space to inspect operation diffs, escalation triggers, rollback posture, and duplicate-review evidence before an execution batch is even eligible.",
             "Tighten the request, inspect the rationale, then review the diff canvas and risk summary together.",
             "Describe the outcome you want Atlas to plan, such as consolidating screenshots or cleaning duplicate documents",
             "Draft plan"),
@@ -35,9 +41,9 @@ public sealed partial class MainWindow : Window
             typeof(OptimizationPage),
             "OPTIMIZATION CENTER",
             "Tune the machine carefully without crossing into unsafe optimizer folklore.",
-            "Atlas only auto-fixes curated low-risk items. Everything else stays recommendation-first with evidence and rollback guidance.",
-            "Optimization changes stay bounded to approved classes like temp cleanup, startup clutter, and duplicate installer pressure.",
-            "Ask Atlas to inspect startup clutter, temp buildup, cache pressure, or safe disk cleanup opportunities",
+            "Atlas only auto-fixes curated low-risk items. Everything else stays recommendation-first with evidence, retained duplicate pressure, and rollback guidance.",
+            "Optimization changes stay bounded to approved classes like temp cleanup, cache cleanup, startup clutter, and duplicate archive pressure.",
+            "Ask Atlas to inspect startup clutter, temp buildup, cache pressure, duplicate installers, or safe disk cleanup opportunities",
             "Analyze system"),
         ["undo"] = new(
             typeof(UndoPage),
@@ -48,10 +54,10 @@ public sealed partial class MainWindow : Window
             "Ask Atlas to show the last duplicate cleanup batch or find a quarantined document to restore",
             "Preview undo"),
         ["history"] = new(
-            typeof(HistoryPage),
+            typeof(MemoryPage),
             "ATLAS MEMORY",
             "Keep the latest command understanding, safety posture, and recovery story in one readable timeline.",
-            "This workspace starts with session-backed memory today and is intentionally shaped to absorb persisted history summaries from the service next.",
+            "This workspace keeps session-backed memory readable today and now carries persisted scan, drift, and duplicate-review summaries from the service.",
             "Use Atlas Memory to understand what the shell believes happened, what safety posture is active, and which recovery artifacts are currently available.",
             "Ask Atlas to recall the latest plan, prompt trace, undo checkpoint, or session activity",
             "Preview undo"),
@@ -66,6 +72,7 @@ public sealed partial class MainWindow : Window
     };
 
     private string currentSectionTag = "dashboard";
+    private bool motionEnabled = true;
 
     public MainWindow()
     {
@@ -77,6 +84,17 @@ public sealed partial class MainWindow : Window
         ShellView.SelectedItem = DashboardItem;
         NavigateTo("dashboard");
         RefreshSessionStatus();
+    }
+
+    private void OnRootGridLoaded(object sender, RoutedEventArgs e)
+    {
+        TryFitWindowToViewport();
+        ResetShellDepth();
+        motionEnabled = AreAnimationsEnabled();
+        if (motionEnabled)
+        {
+            StartAmbientMotion();
+        }
     }
 
     private void OnSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -179,8 +197,8 @@ public sealed partial class MainWindow : Window
         var preview = await session.PreviewVoiceIntentAsync(CommandInputBox.Text);
         session.UpdateCommandDraftPreview(preview.ParsedIntent, currentSectionTag, "Voice preview", preview.NeedsConfirmation);
         VoiceStateText.Text = preview.NeedsConfirmation
-            ? $"Voice intent preview: {preview.ParsedIntent}. Confirmation will still be required."
-            : $"Voice intent preview: {preview.ParsedIntent}.";
+            ? $"Voice intent preview: {preview.ParsedIntent}. Destructive, bulk, or protected-target phrasing stays confirmation-first."
+            : $"Voice intent preview: {preview.ParsedIntent}. Atlas will still route it through the same plan and policy gates as typed input.";
     }
 
     private async Task DraftPlanFromInputAsync()
@@ -216,7 +234,13 @@ public sealed partial class MainWindow : Window
         currentSectionTag = tag;
         if (ContentFrame.CurrentSourcePageType != section.PageType)
         {
-            ContentFrame.Navigate(section.PageType, null, new EntranceNavigationTransitionInfo());
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (ContentFrame.CurrentSourcePageType != section.PageType)
+                {
+                    ContentFrame.Navigate(section.PageType, null, new EntranceNavigationTransitionInfo());
+                }
+            });
         }
 
         ShellEyebrowText.Text = section.Eyebrow;
@@ -238,6 +262,29 @@ public sealed partial class MainWindow : Window
         BusyProgressBar.IsIndeterminate = session.IsBusy;
         BusyProgressBar.Visibility = session.IsBusy ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private void OnRootGridPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!motionEnabled)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(RootGrid).Position;
+        var width = Math.Max(1d, RootGrid.ActualWidth);
+        var height = Math.Max(1d, RootGrid.ActualHeight);
+        var offsetX = ((point.X / width) - 0.5d) * 18d;
+        var offsetY = ((point.Y / height) - 0.5d) * 14d;
+
+        HeroSurface.Translation = new Vector3((float)(offsetX * 0.18d), (float)(offsetY * 0.14d), 10f);
+        CommandSurface.Translation = new Vector3((float)(offsetX * 0.28d), (float)(offsetY * 0.2d), 18f);
+        HeroOrbHost.Translation = new Vector3((float)(offsetX * -0.55d), (float)(offsetY * -0.45d), 18f);
+        TopGlowEllipse.Translation = new Vector3((float)(offsetX * -0.9d), (float)(offsetY * -0.7d), 0f);
+        BottomGlowEllipse.Translation = new Vector3((float)(offsetX * 0.75d), (float)(offsetY * 0.65d), 0f);
+    }
+
+    private void OnRootGridPointerExited(object sender, PointerRoutedEventArgs e) =>
+        ResetShellDepth();
 
     private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e) =>
         RefreshSessionStatus();
@@ -264,6 +311,113 @@ public sealed partial class MainWindow : Window
         {
             // Backdrop support is optional in local verification environments.
         }
+    }
+
+    private void TryFitWindowToViewport()
+    {
+        try
+        {
+            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(WindowNative.GetWindowHandle(this));
+            var appWindow = AppWindow.GetFromWindowId(windowId);
+            var displayArea = DisplayArea.GetFromWindowId(windowId, DisplayAreaFallback.Primary);
+            var workArea = displayArea.WorkArea;
+
+            var maxWidth = Math.Max(1100, workArea.Width - 48);
+            var maxHeight = Math.Max(720, workArea.Height - 48);
+            var targetWidth = Math.Min(maxWidth, Math.Max(1320, (int)(workArea.Width * 0.9d)));
+            var targetHeight = Math.Min(maxHeight, Math.Max(820, (int)(workArea.Height * 0.9d)));
+            var left = workArea.X + Math.Max(0, (workArea.Width - targetWidth) / 2);
+            var top = workArea.Y + Math.Max(0, (workArea.Height - targetHeight) / 2);
+
+            appWindow.MoveAndResize(new RectInt32(left, top, targetWidth, targetHeight));
+        }
+        catch
+        {
+            // Window sizing is best-effort; layout remains adaptive if this fails.
+        }
+    }
+
+    private void ResetShellDepth()
+    {
+        HeroSurface.Translation = new Vector3(0f, 0f, 10f);
+        CommandSurface.Translation = new Vector3(0f, 0f, 18f);
+        HeroOrbHost.Translation = new Vector3(0f, 0f, 18f);
+        TopGlowEllipse.Translation = Vector3.Zero;
+        BottomGlowEllipse.Translation = Vector3.Zero;
+    }
+
+    private void StartAmbientMotion()
+    {
+        StartScaleLoop(OrbPulse, 1f, 1.08f, 4200d);
+        StartScaleLoop(OrbCore, 1f, 1.04f, 3600d);
+        StartVerticalLoop(OrbRing, -5f, 5200d);
+        StartOpacityLoop(OrbHalo, 0.42f, 0.74f, 4300d);
+        StartRotationLoop(OrbRing, 26000d);
+    }
+
+    private static bool AreAnimationsEnabled()
+    {
+        try
+        {
+            return new UISettings().AnimationsEnabled;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static void StartScaleLoop(UIElement element, float minScale, float maxScale, double durationMs)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var size = element.RenderSize;
+        visual.CenterPoint = new Vector3((float)size.Width / 2f, (float)size.Height / 2f, 0f);
+
+        var animation = visual.Compositor.CreateVector3KeyFrameAnimation();
+        animation.InsertKeyFrame(0f, new Vector3(minScale, minScale, 1f));
+        animation.InsertKeyFrame(0.5f, new Vector3(maxScale, maxScale, 1f));
+        animation.InsertKeyFrame(1f, new Vector3(minScale, minScale, 1f));
+        animation.Duration = TimeSpan.FromMilliseconds(durationMs);
+        animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+        visual.StartAnimation(nameof(visual.Scale), animation);
+    }
+
+    private static void StartVerticalLoop(UIElement element, float peakOffset, double durationMs)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var animation = visual.Compositor.CreateVector3KeyFrameAnimation();
+        animation.InsertKeyFrame(0f, Vector3.Zero);
+        animation.InsertKeyFrame(0.5f, new Vector3(0f, peakOffset, 0f));
+        animation.InsertKeyFrame(1f, Vector3.Zero);
+        animation.Duration = TimeSpan.FromMilliseconds(durationMs);
+        animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+        visual.StartAnimation(nameof(visual.Offset), animation);
+    }
+
+    private static void StartOpacityLoop(UIElement element, float minOpacity, float maxOpacity, double durationMs)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var animation = visual.Compositor.CreateScalarKeyFrameAnimation();
+        animation.InsertKeyFrame(0f, minOpacity);
+        animation.InsertKeyFrame(0.5f, maxOpacity);
+        animation.InsertKeyFrame(1f, minOpacity);
+        animation.Duration = TimeSpan.FromMilliseconds(durationMs);
+        animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+        visual.StartAnimation(nameof(visual.Opacity), animation);
+    }
+
+    private static void StartRotationLoop(UIElement element, double durationMs)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var size = element.RenderSize;
+        visual.CenterPoint = new Vector3((float)size.Width / 2f, (float)size.Height / 2f, 0f);
+
+        var animation = visual.Compositor.CreateScalarKeyFrameAnimation();
+        animation.InsertKeyFrame(0f, 0f);
+        animation.InsertKeyFrame(1f, 360f);
+        animation.Duration = TimeSpan.FromMilliseconds(durationMs);
+        animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+        visual.StartAnimation(nameof(visual.RotationAngleInDegrees), animation);
     }
 
     private sealed record ShellSection(

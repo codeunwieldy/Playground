@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Atlas.Core.Contracts;
 using Atlas.Core.Planning;
 using Atlas.Core.Policies;
+using Atlas.Storage.Repositories;
 using Microsoft.Extensions.Options;
 
 namespace Atlas.Service.Services;
@@ -9,7 +10,8 @@ namespace Atlas.Service.Services;
 public sealed class PlanExecutionService(
     AtlasPolicyEngine policyEngine,
     RollbackPlanner rollbackPlanner,
-    IOptions<AtlasServiceOptions> serviceOptions)
+    IOptions<AtlasServiceOptions> serviceOptions,
+    IInventoryRepository inventoryRepository)
 {
     private static readonly int[] OperationOrder =
     [
@@ -23,8 +25,28 @@ public sealed class PlanExecutionService(
         (int)OperationKind.RevertOptimizationFix
     ];
 
-    public Task<ExecutionResponse> ExecuteAsync(ExecutionRequest request, CancellationToken cancellationToken)
+    public async Task<ExecutionResponse> ExecuteAsync(ExecutionRequest request, CancellationToken cancellationToken)
     {
+        // Trust gate: block live execution when the latest inventory session is degraded.
+        // Preview/dry-run always remains available.
+        if (request.Execute)
+        {
+            var latestSession = await inventoryRepository.GetLatestSessionAsync(cancellationToken);
+            if (latestSession is not null && !latestSession.IsTrusted)
+            {
+                return new ExecutionResponse
+                {
+                    Success = false,
+                    Messages =
+                    [
+                        "Execution blocked: retained inventory session is degraded (IsTrusted=false). " +
+                        "Preview/dry-run remains available. " +
+                        "Run a full rescan to restore trusted state before executing."
+                    ]
+                };
+            }
+        }
+
         var validation = policyEngine.ValidatePlan(request.PolicyProfile, new PlanGraph
         {
             PlanId = request.Batch.PlanId,
@@ -33,7 +55,7 @@ public sealed class PlanExecutionService(
 
         if (!validation.IsAllowed)
         {
-            return Task.FromResult(new ExecutionResponse
+            return new ExecutionResponse
             {
                 Success = false,
                 Messages = validation.Decisions
@@ -41,18 +63,18 @@ public sealed class PlanExecutionService(
                     .SelectMany(static decision => decision.Decision.RiskEnvelope.BlockedReasons)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList()
-            });
+            };
         }
 
         // Preflight: validate all operations before any mutation.
         var preflightErrors = RunPreflight(request.Batch.Operations);
         if (preflightErrors.Count > 0)
         {
-            return Task.FromResult(new ExecutionResponse
+            return new ExecutionResponse
             {
                 Success = false,
                 Messages = preflightErrors
-            });
+            };
         }
 
         // Sort operations into safe deterministic order.
@@ -89,22 +111,22 @@ public sealed class PlanExecutionService(
                 var partialCheckpoint = rollbackPlanner.BuildCheckpoint(partialBatch, quarantineItems);
                 partialCheckpoint.Notes.Add($"Partial failure: {completedOperations.Count} of {ordered.Count} operations completed before error.");
 
-                return Task.FromResult(new ExecutionResponse
+                return new ExecutionResponse
                 {
                     Success = false,
                     Messages = messages,
                     UndoCheckpoint = partialCheckpoint
-                });
+                };
             }
         }
 
         var checkpoint = rollbackPlanner.BuildCheckpoint(request.Batch, quarantineItems);
-        return Task.FromResult(new ExecutionResponse
+        return new ExecutionResponse
         {
             Success = true,
             Messages = messages,
             UndoCheckpoint = checkpoint
-        });
+        };
     }
 
     public Task<UndoResponse> UndoAsync(UndoRequest request, CancellationToken cancellationToken)

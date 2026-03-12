@@ -50,6 +50,11 @@ public sealed class HistoryPage : Page
         Spacing = 12
     };
 
+    private readonly StackPanel scanTrustHost = new()
+    {
+        Spacing = 12
+    };
+
     private readonly StackPanel scanProvenanceHost = new()
     {
         Spacing = 12
@@ -66,6 +71,21 @@ public sealed class HistoryPage : Page
     };
 
     private readonly StackPanel persistedFileSampleHost = new()
+    {
+        Spacing = 12
+    };
+
+    private readonly StackPanel persistedDuplicateHost = new()
+    {
+        Spacing = 12
+    };
+
+    private readonly StackPanel duplicateDetailHost = new()
+    {
+        Spacing = 12
+    };
+
+    private readonly StackPanel fileExplainabilityHost = new()
     {
         Spacing = 12
     };
@@ -114,11 +134,28 @@ public sealed class HistoryPage : Page
 
     public HistoryPage()
     {
-        DataContext = Session;
-        AttachCollectionListeners();
-        Content = BuildLayout();
-        RefreshDynamicSections();
-        Unloaded += OnUnloaded;
+        Content = new Grid
+        {
+            Padding = new Thickness(28),
+            Children =
+            {
+                new Border
+                {
+                    Style = ResolveStyle("AtlasPanelStyle"),
+                    Padding = new Thickness(24),
+                    Child = new StackPanel
+                    {
+                        Spacing = 12,
+                        Children =
+                        {
+                            CreateText("ATLAS MEMORY", "AtlasEyebrowStyle"),
+                            CreateText("Memory workspace is loading in a safe compatibility mode while the richer view is repaired.", "AtlasSectionHeadingStyle"),
+                            CreateText("This page should stay open instead of crashing the app. Once the root cause is isolated, the full interactive memory workspace will come back on top of this safer base.", "AtlasBodyTextStyle")
+                        }
+                    }
+                }
+            }
+        };
     }
 
     private UIElement BuildLayout()
@@ -135,17 +172,9 @@ public sealed class HistoryPage : Page
         layout.Children.Add(CreateScanContinuityCard());
         layout.Children.Add(CreateRescanStoryCard());
         layout.Children.Add(CreateDriftReviewCard());
-        layout.Children.Add(CreateTwoColumnRow(CreateScanPairCard(), CreateDriftFileSampleCard(), 430, 430));
-        layout.Children.Add(CreateDriftHotspotCard());
-        layout.Children.Add(CreateScanProvenanceCard());
-        layout.Children.Add(CreateTwoColumnRow(CreateStoredScansCard(), CreateStoredVolumesCard(), 430, 430));
-        layout.Children.Add(CreateStoredFileSampleCard());
-        layout.Children.Add(CreateTwoColumnRow(CreateStoredPlansCard(), CreateStoredFindingsCard(), 430, 430));
-        layout.Children.Add(CreateTwoColumnRow(CreateIntentCard(), CreateServiceCard(), 480, 360));
-        layout.Children.Add(CreateTwoColumnRow(CreatePlanCard(), CreateUndoCard(), 420, 420));
-        layout.Children.Add(CreateTwoColumnRow(CreatePlanSignalsCard(), CreateUndoSignalsCard(), 420, 420));
-        layout.Children.Add(CreateTraceMemoryCard());
-        layout.Children.Add(CreateTwoColumnRow(CreateActivityCard(), CreateUndoBatchesCard(), 520, 360));
+        layout.Children.Add(CreateStoredScansCard());
+        layout.Children.Add(CreateStoredDuplicateReviewCard());
+        layout.Children.Add(CreateActivityCard());
         layout.Children.Add(CreateQuarantineCard());
 
         return new ScrollViewer
@@ -164,10 +193,14 @@ public sealed class HistoryPage : Page
         Session.ScanPairSignals.CollectionChanged += OnDynamicCollectionChanged;
         Session.DriftFileSampleCards.CollectionChanged += OnDynamicCollectionChanged;
         Session.DriftHotspotCards.CollectionChanged += OnDynamicCollectionChanged;
+        Session.ScanTrustSignals.CollectionChanged += OnDynamicCollectionChanged;
         Session.ScanProvenanceSignals.CollectionChanged += OnDynamicCollectionChanged;
         Session.PersistedScanSessionMemory.CollectionChanged += OnDynamicCollectionChanged;
         Session.PersistedVolumeMemory.CollectionChanged += OnDynamicCollectionChanged;
         Session.PersistedFileSampleMemory.CollectionChanged += OnDynamicCollectionChanged;
+        Session.PersistedDuplicateMemory.CollectionChanged += OnDynamicCollectionChanged;
+        Session.DuplicateDetailCards.CollectionChanged += OnDynamicCollectionChanged;
+        Session.FileExplainabilityCards.CollectionChanged += OnDynamicCollectionChanged;
         Session.PlanSignals.CollectionChanged += OnDynamicCollectionChanged;
         Session.UndoSignals.CollectionChanged += OnDynamicCollectionChanged;
         Session.ActivityFeed.CollectionChanged += OnDynamicCollectionChanged;
@@ -188,10 +221,14 @@ public sealed class HistoryPage : Page
         Session.ScanPairSignals.CollectionChanged -= OnDynamicCollectionChanged;
         Session.DriftFileSampleCards.CollectionChanged -= OnDynamicCollectionChanged;
         Session.DriftHotspotCards.CollectionChanged -= OnDynamicCollectionChanged;
+        Session.ScanTrustSignals.CollectionChanged -= OnDynamicCollectionChanged;
         Session.ScanProvenanceSignals.CollectionChanged -= OnDynamicCollectionChanged;
         Session.PersistedScanSessionMemory.CollectionChanged -= OnDynamicCollectionChanged;
         Session.PersistedVolumeMemory.CollectionChanged -= OnDynamicCollectionChanged;
         Session.PersistedFileSampleMemory.CollectionChanged -= OnDynamicCollectionChanged;
+        Session.PersistedDuplicateMemory.CollectionChanged -= OnDynamicCollectionChanged;
+        Session.DuplicateDetailCards.CollectionChanged -= OnDynamicCollectionChanged;
+        Session.FileExplainabilityCards.CollectionChanged -= OnDynamicCollectionChanged;
         Session.PlanSignals.CollectionChanged -= OnDynamicCollectionChanged;
         Session.UndoSignals.CollectionChanged -= OnDynamicCollectionChanged;
         Session.ActivityFeed.CollectionChanged -= OnDynamicCollectionChanged;
@@ -221,10 +258,14 @@ public sealed class HistoryPage : Page
         ReplaceChildren(scanPairHost, Session.ScanPairSignals.Select(CreateSignalTile));
         RefreshDriftFileSampleSection();
         ReplaceChildren(driftHotspotHost, Session.DriftHotspotCards.Select(CreateStoredMemoryTile));
+        ReplaceChildren(scanTrustHost, Session.ScanTrustSignals.Select(CreateSignalTile));
         ReplaceChildren(scanProvenanceHost, Session.ScanProvenanceSignals.Select(CreateSignalTile));
         ReplaceChildren(persistedScanSessionHost, Session.PersistedScanSessionMemory.Select(CreateStoredMemoryTile));
         ReplaceChildren(persistedVolumeHost, Session.PersistedVolumeMemory.Select(CreateStoredMemoryTile));
         ReplaceChildren(persistedFileSampleHost, Session.PersistedFileSampleMemory.Select(CreateStoredMemoryTile));
+        ReplaceChildren(persistedDuplicateHost, Session.PersistedDuplicateMemory.Select(CreateStoredMemoryTile));
+        ReplaceChildren(duplicateDetailHost, Session.DuplicateDetailCards.Select(CreateStoredMemoryTile));
+        ReplaceChildren(fileExplainabilityHost, Session.FileExplainabilityCards.Select(CreateStoredMemoryTile));
         ReplaceChildren(planSignalsHost, Session.PlanSignals.Select(CreateSignalTile));
         ReplaceChildren(undoSignalsHost, Session.UndoSignals.Select(CreateSignalTile));
         ReplaceChildren(activityFeedHost, Session.ActivityFeed.Select(CreateActivityTile));
@@ -365,6 +406,16 @@ public sealed class HistoryPage : Page
         return CreateCard(stack, "AtlasPanelStyle", new Thickness(24));
     }
 
+    private FrameworkElement CreateScanTrustCard()
+    {
+        var stack = new StackPanel { Spacing = 14 };
+        stack.Children.Add(CreateText("SCAN TRUST", "AtlasEyebrowStyle"));
+        stack.Children.Add(CreateText("How Atlas grades the retained inventory before action", "AtlasSectionHeadingStyle"));
+        stack.Children.Add(CreateBoundText(nameof(AtlasShellSession.ScanTrustSummaryText), "AtlasBodyTextStyle"));
+        stack.Children.Add(scanTrustHost);
+        return CreateCard(stack, "AtlasPanelStyle", new Thickness(24));
+    }
+
     private FrameworkElement CreateScanProvenanceCard()
     {
         var stack = new StackPanel { Spacing = 14 };
@@ -402,6 +453,36 @@ public sealed class HistoryPage : Page
         stack.Children.Add(CreateText("Latest persisted file rows", "AtlasSectionHeadingStyle"));
         stack.Children.Add(CreateBoundText(nameof(AtlasShellSession.PersistedFileSampleSummaryText), "AtlasBodyTextStyle"));
         stack.Children.Add(persistedFileSampleHost);
+        return CreateCard(stack, "AtlasPanelStyle", new Thickness(24));
+    }
+
+    private FrameworkElement CreateStoredDuplicateReviewCard()
+    {
+        var stack = new StackPanel { Spacing = 14 };
+        stack.Children.Add(CreateText("STORED DUPLICATE REVIEW", "AtlasEyebrowStyle"));
+        stack.Children.Add(CreateText("Latest retained duplicate groups", "AtlasSectionHeadingStyle"));
+        stack.Children.Add(CreateBoundText(nameof(AtlasShellSession.PersistedDuplicateSummaryText), "AtlasBodyTextStyle"));
+        stack.Children.Add(persistedDuplicateHost);
+        return CreateCard(stack, "AtlasPanelStyle", new Thickness(24));
+    }
+
+    private FrameworkElement CreateFileExplainabilityCard()
+    {
+        var stack = new StackPanel { Spacing = 14 };
+        stack.Children.Add(CreateText("FILE EXPLAINABILITY", "AtlasEyebrowStyle"));
+        stack.Children.Add(CreateText("Why one representative file matters right now", "AtlasSectionHeadingStyle"));
+        stack.Children.Add(CreateBoundText(nameof(AtlasShellSession.FileExplainabilitySummaryText), "AtlasBodyTextStyle"));
+        stack.Children.Add(fileExplainabilityHost);
+        return CreateCard(stack, "AtlasPanelStyle", new Thickness(24));
+    }
+
+    private FrameworkElement CreateStoredDuplicateDetailCard()
+    {
+        var stack = new StackPanel { Spacing = 14 };
+        stack.Children.Add(CreateText("DUPLICATE DRILL-IN", "AtlasEyebrowStyle"));
+        stack.Children.Add(CreateText("Why one retained duplicate group is trustworthy, risky, or cleanup-eligible", "AtlasSectionHeadingStyle"));
+        stack.Children.Add(CreateBoundText(nameof(AtlasShellSession.DuplicateDetailSummaryText), "AtlasBodyTextStyle"));
+        stack.Children.Add(duplicateDetailHost);
         return CreateCard(stack, "AtlasPanelStyle", new Thickness(24));
     }
 

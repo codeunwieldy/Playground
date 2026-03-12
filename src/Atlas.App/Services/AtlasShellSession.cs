@@ -2,18 +2,35 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Atlas.Core.Contracts;
+using Atlas.Core.Planning;
 using Atlas.Core.Policies;
+using Atlas.Core.Scanning;
+using Microsoft.Win32;
 
 namespace Atlas.App.Services;
 
 public sealed class AtlasShellSession : INotifyPropertyChanged
 {
+    private const long PreviewTempFindingThresholdBytes = 250L * 1024 * 1024;
+    private const long PreviewCacheFindingThresholdBytes = 300L * 1024 * 1024;
+
     private static readonly IReadOnlyList<OptimizationKind> SafeOptimizationKinds =
     [
         OptimizationKind.TemporaryFiles,
         OptimizationKind.CacheCleanup,
         OptimizationKind.DuplicateArchives,
         OptimizationKind.UserStartupEntry
+    ];
+
+    private static readonly string[] DuplicateArchiveExtensions =
+    [
+        ".zip",
+        ".7z",
+        ".rar",
+        ".iso",
+        ".msi",
+        ".exe",
+        ".cab"
     ];
 
     private static readonly Dictionary<string, string> CategoryByExtension = new(StringComparer.OrdinalIgnoreCase)
@@ -49,6 +66,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
     private readonly AtlasPipeClient pipeClient = new();
     private readonly PathSafetyClassifier pathSafetyClassifier = new();
+    private readonly SafeDuplicateCleanupPlanner safeDuplicateCleanupPlanner = new();
     private readonly SemaphoreSlim operationLock = new(1, 1);
 
     private PolicyProfile profile = PolicyProfileFactory.CreateDefault();
@@ -61,6 +79,13 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     private InventorySessionListResponse persistedInventorySessions = new();
     private InventorySessionDetailResponse persistedInventoryDetail = new();
     private InventoryFileListResponse persistedInventoryFiles = new();
+    private SessionDuplicateListResponse persistedSessionDuplicates = new();
+    private DuplicateGroupDetailResponse persistedDuplicateDetail = new();
+    private DuplicateActionReviewResponse persistedDuplicateActionReview = new();
+    private DuplicateCleanupPreviewResponse persistedDuplicateCleanupPreview = new();
+    private DuplicateCleanupBatchPreviewResponse persistedDuplicateCleanupBatchPreview = new();
+    private FileInspectionResponse liveFileInspection = new();
+    private SessionFileDetailResponse persistedFileDetail = new();
     private DriftSnapshotResponse persistedDriftSnapshot = new();
     private SessionDiffResponse persistedSessionDiff = new();
     private SessionDiffFilesResponse persistedDiffFiles = new();
@@ -93,11 +118,15 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     private string scanPairSummaryText = "Stored session-pair intelligence will appear here once Atlas can compare two persisted scans.";
     private string driftFileSampleSummaryText = "A bounded changed-path sample will appear here once Atlas can compare stored scan pairs.";
     private string driftHotspotSummaryText = "Drift hotspots will appear here once Atlas can summarize changed-file patterns.";
+    private string scanTrustSummaryText = "Scan trust posture will appear here once Atlas can grade live or stored inventory confidence.";
     private string scanProvenanceSummaryText = "Scan provenance will appear here once Atlas has enough live or stored scan evidence to explain session origin.";
     private string persistedMemorySummaryText = "Service-backed history will appear here when Atlas can refresh stored memory.";
     private string persistedScanSummaryText = "Stored scan sessions will appear here once the service can answer inventory history queries.";
     private string persistedVolumeSummaryText = "Stored volume posture will appear here once Atlas can inspect a persisted scan session.";
     private string persistedFileSampleSummaryText = "Stored file samples will appear here once Atlas can inspect persisted inventory rows.";
+    private string persistedDuplicateSummaryText = "Stored duplicate review will appear here once Atlas can inspect retained duplicate groups.";
+    private string duplicateDetailSummaryText = "Retained duplicate drill-in will appear here once Atlas can inspect one persisted duplicate group and review its cleanup posture.";
+    private string fileExplainabilitySummaryText = "File explainability will appear here once Atlas can inspect a representative file through the service.";
     private string persistedPlanSummaryText = "Stored plan drafts will appear here once the service-backed history lane is available.";
     private string persistedFindingSummaryText = "Stored optimization findings will appear here once Atlas refreshes service memory.";
     private string persistedTraceSummaryText = "Stored planning and voice traces will appear here once the service-backed history lane is online.";
@@ -154,6 +183,8 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
     public ObservableCollection<AtlasStoredMemoryCard> DriftHotspotCards { get; } = new();
 
+    public ObservableCollection<AtlasSignalCard> ScanTrustSignals { get; } = new();
+
     public ObservableCollection<AtlasSignalCard> ScanProvenanceSignals { get; } = new();
 
     public ObservableCollection<AtlasSignalCard> PlanSignals { get; } = new();
@@ -179,6 +210,12 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     public ObservableCollection<AtlasStoredMemoryCard> PersistedVolumeMemory { get; } = new();
 
     public ObservableCollection<AtlasStoredMemoryCard> PersistedFileSampleMemory { get; } = new();
+
+    public ObservableCollection<AtlasStoredMemoryCard> PersistedDuplicateMemory { get; } = new();
+
+    public ObservableCollection<AtlasStoredMemoryCard> DuplicateDetailCards { get; } = new();
+
+    public ObservableCollection<AtlasStoredMemoryCard> FileExplainabilityCards { get; } = new();
 
     public string ConnectionModeLabel
     {
@@ -366,6 +403,12 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         private set => SetProperty(ref driftHotspotSummaryText, value);
     }
 
+    public string ScanTrustSummaryText
+    {
+        get => scanTrustSummaryText;
+        private set => SetProperty(ref scanTrustSummaryText, value);
+    }
+
     public string ScanProvenanceSummaryText
     {
         get => scanProvenanceSummaryText;
@@ -394,6 +437,24 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     {
         get => persistedFileSampleSummaryText;
         private set => SetProperty(ref persistedFileSampleSummaryText, value);
+    }
+
+    public string PersistedDuplicateSummaryText
+    {
+        get => persistedDuplicateSummaryText;
+        private set => SetProperty(ref persistedDuplicateSummaryText, value);
+    }
+
+    public string DuplicateDetailSummaryText
+    {
+        get => duplicateDetailSummaryText;
+        private set => SetProperty(ref duplicateDetailSummaryText, value);
+    }
+
+    public string FileExplainabilitySummaryText
+    {
+        get => fileExplainabilitySummaryText;
+        private set => SetProperty(ref fileExplainabilitySummaryText, value);
     }
 
     public string PersistedPlanSummaryText
@@ -730,9 +791,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                     liveResponse is null ? "Preview optimization" : "Live optimization",
                     "Optimization Center",
                     "Evidence first",
-                    "Curated low-risk fixes can be reviewed alongside recommendation-only findings. Unsafe tweak folklore stays out.",
+                    "Curated low-risk fixes stay inside temp cleanup, cache cleanup, duplicate archive review, and startup clutter lanes. Unsafe tweak folklore stays out.",
                     "Inspect optimization details",
-                    "Review the safe-fix, approval-gated, and recommendation-only groups before deciding what should run.");
+                    "Review the temp, cache, duplicate-archive, startup, and recommendation-only groups before deciding what should run.");
             });
     }
 
@@ -992,7 +1053,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 },
                 routeTag switch
                 {
-                    "optimization" => "Ask Atlas about startup clutter, cache buildup, temporary files, or other approved optimization classes.",
+                    "optimization" => "Ask Atlas about startup clutter, cache buildup, temporary files, duplicate installers, or other approved optimization classes.",
                     "undo" => "Request a rollback preview, a quarantined-file restore, or the latest recovery story.",
                     "settings" => "Review roots, thresholds, sync-folder handling, and upload posture without crossing into protected system space.",
                     "plans" => "Describe the outcome you want, such as cleaning Downloads or consolidating screenshots into clearer anchors.",
@@ -1009,7 +1070,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 },
                 routeTag switch
                 {
-                    "optimization" => "Optimization requests stay bounded to curated safe classes with evidence and rollback guidance.",
+                    "optimization" => "Optimization requests stay bounded to temp cleanup, cache cleanup, duplicate archive review, and startup clutter with evidence and rollback guidance.",
                     "undo" => "Rollback remains service-only and replays from checkpoint data instead of ad hoc file operations.",
                     "settings" => "Atlas lets you tune policy, but protected roots and service-side guardrails remain in force.",
                     _ => "Atlas drafts the plan first, then keeps deletion quarantine-first and execution blocked until the service is live."
@@ -1022,7 +1083,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                     "plans" => "Draft the organization plan",
                     _ => "Run a fresh scan"
                 },
-                BuildNextStepDetail(routeTag, requiresConfirmation == true));
+                BuildNextStepDetail(routeTag, requiresConfirmation == true, origin));
             return;
         }
 
@@ -1041,17 +1102,31 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                     _ => "Plan preview"
                 };
 
+        var storedTrust = GetStoredScanTrustContext();
+        var trustReviewAddon = routeTag switch
+        {
+            "undo" => string.Empty,
+            "settings" => string.Empty,
+            _ when !storedTrust.HasStoredSession && IsLiveMode => " Atlas still needs a retained trusted scan before structural execution should be considered grounded.",
+            _ when storedTrust.HasStoredSession && !storedTrust.IsTrusted => $" Latest retained scan {ShortId(storedTrust.SessionId)} is degraded, so Atlas should refresh a trusted scan before treating execution as eligible.",
+            _ => string.Empty
+        };
+
         var reviewDetail = escalatesGuardrails
             ? "This language points at protected or system-adjacent areas. Atlas will keep those paths blocked and route the request through explicit review."
             : soundsDestructive
-                ? "The request sounds destructive or structural, so Atlas will keep it in preview mode with quarantine-first recovery where possible."
+                ? $"The request sounds destructive or structural, so Atlas will keep it in preview mode with quarantine-first recovery where possible.{trustReviewAddon}"
                 : routeTag switch
                 {
-                    "optimization" => "Atlas will surface evidence, projected impact, and rollback posture before any approved fix is eligible.",
+                    "optimization" => $"Atlas will surface evidence, projected impact, and rollback posture before any approved fix is eligible.{trustReviewAddon}",
                     "undo" => "Atlas will confirm the checkpoint story first so restores and reversals remain deliberate.",
                     "settings" => "Policy edits stay legible and reversible, with the hard safety boundary still enforced by the service.",
-                    _ => "Atlas will convert this into a structured plan and surface the diff, rationale, and risk envelope before execution."
+                    _ => $"Atlas will convert this into a structured plan and surface the diff, rationale, and risk envelope before execution.{trustReviewAddon}"
                 };
+
+        reviewDetail += BuildPrivacyPostureAddon(routeTag);
+        reviewDetail += BuildVoiceSafetyAddon(origin, requiresConfirmation == true);
+        reviewDetail += BuildDuplicatePressureAddon(routeTag);
 
         ApplyCommandPreview(
             routeTag switch
@@ -1073,7 +1148,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 "settings" => "Route into Policy Studio",
                 _ => "Route into Plan Review"
             },
-            BuildNextStepDetail(routeTag, soundsDestructive));
+            BuildNextStepDetail(routeTag, soundsDestructive, origin));
     }
 
     public void SavePolicyChanges()
@@ -1177,12 +1252,22 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             persistedInventorySessions = new();
             persistedInventoryDetail = new();
             persistedInventoryFiles = new();
+            persistedSessionDuplicates = new();
+            persistedDuplicateDetail = new();
+            persistedDuplicateActionReview = new();
+            persistedDuplicateCleanupPreview = new();
+            persistedDuplicateCleanupBatchPreview = new();
+            liveFileInspection = new();
+            persistedFileDetail = new();
             persistedDriftSnapshot = new();
             persistedSessionDiff = new();
             persistedDiffFiles = new();
             ReplaceAll(PersistedScanSessionMemory, []);
             ReplaceAll(PersistedVolumeMemory, []);
             ReplaceAll(PersistedFileSampleMemory, []);
+            ReplaceAll(PersistedDuplicateMemory, []);
+            ReplaceAll(DuplicateDetailCards, []);
+            ReplaceAll(FileExplainabilityCards, []);
             ReplaceAll(ScanContinuitySignals, []);
             ReplaceAll(RescanStoryCards, []);
             ReplaceAll(DriftReviewCards, []);
@@ -1204,6 +1289,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             PersistedScanSummaryText = "Stored scan sessions will appear here once the service can answer inventory history queries.";
             PersistedVolumeSummaryText = "Stored volume posture will appear here once Atlas can inspect a persisted scan session.";
             PersistedFileSampleSummaryText = "Stored file samples will appear here once Atlas can inspect persisted inventory rows.";
+            PersistedDuplicateSummaryText = "Stored duplicate review will appear here once Atlas can inspect retained duplicate groups.";
+            DuplicateDetailSummaryText = "Retained duplicate drill-in will appear here once Atlas can inspect one persisted duplicate group and review its cleanup posture.";
+            FileExplainabilitySummaryText = "File explainability will appear here once Atlas can inspect a representative file through the service.";
             PersistedPlanSummaryText = "Stored plan drafts will appear here once the service can answer history queries.";
             PersistedFindingSummaryText = "Stored optimization findings will appear here once the service can answer history queries.";
             PersistedTraceSummaryText = "Stored planning and voice traces will appear here once the service can answer history queries.";
@@ -1216,16 +1304,39 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
         persistedHistory = snapshot;
         await RefreshPersistedInventoryAsync(cancellationToken);
+        await RefreshDuplicateDetailAsync(cancellationToken);
+        await RefreshFileExplainabilityAsync(cancellationToken);
 
         ReplaceAll(PersistedScanSessionMemory, persistedInventorySessions.Sessions.Select(CreateStoredScanSessionCard));
         ReplaceAll(PersistedVolumeMemory, persistedInventoryDetail.Volumes.Select(CreateStoredVolumeCard));
         ReplaceAll(PersistedFileSampleMemory, persistedInventoryFiles.Files.Select(CreateStoredFileCard));
+        var persistedDuplicateCards = persistedSessionDuplicates.Groups
+            .Select(CreateStoredDuplicateCard)
+            .ToList();
+
+        if (persistedDuplicateCleanupBatchPreview.Found)
+        {
+            persistedDuplicateCards.Insert(0, CreateStoredDuplicateBatchPreviewCard());
+
+            var leadBatchGroup = persistedDuplicateCleanupBatchPreview.Groups
+                .OrderByDescending(static group => group.IsPreviewable)
+                .ThenByDescending(static group => group.OperationCount)
+                .ThenByDescending(static group => group.CleanupConfidence)
+                .FirstOrDefault();
+
+            if (leadBatchGroup is not null)
+            {
+                persistedDuplicateCards.Insert(1, CreateStoredDuplicateBatchGroupCard(leadBatchGroup));
+            }
+        }
+
+        ReplaceAll(PersistedDuplicateMemory, persistedDuplicateCards);
         ReplaceAll(PersistedPlanMemory, persistedHistory.RecentPlans.Select(CreateStoredPlanCard));
         ReplaceAll(PersistedFindingMemory, persistedHistory.RecentFindings.Select(CreateStoredFindingCard));
         ReplaceAll(PersistedTraceMemory, persistedHistory.RecentTraces.Select(CreateStoredTraceCard));
 
         PersistedMemorySummaryText = persistedInventorySnapshot.HasSession
-            ? $"{persistedInventorySessions.Sessions.Count:N0} stored scans, {persistedHistory.RecentPlans.Count:N0} plans, {persistedHistory.RecentCheckpoints.Count:N0} checkpoints, {persistedHistory.RecentQuarantine.Count:N0} quarantine items, {persistedHistory.RecentFindings.Count:N0} findings, and {persistedHistory.RecentTraces.Count:N0} traces are available from stored service memory."
+            ? $"{persistedInventorySessions.Sessions.Count:N0} stored scans, {persistedSessionDuplicates.TotalCount:N0} retained duplicate groups, {persistedHistory.RecentPlans.Count:N0} plans, {persistedHistory.RecentCheckpoints.Count:N0} checkpoints, {persistedHistory.RecentQuarantine.Count:N0} quarantine items, {persistedHistory.RecentFindings.Count:N0} findings, and {persistedHistory.RecentTraces.Count:N0} traces are available from stored service memory."
             : $"{persistedHistory.RecentPlans.Count:N0} plans, {persistedHistory.RecentCheckpoints.Count:N0} checkpoints, {persistedHistory.RecentQuarantine.Count:N0} quarantine items, {persistedHistory.RecentFindings.Count:N0} findings, and {persistedHistory.RecentTraces.Count:N0} traces are available from stored service memory.";
         if (persistedDriftSnapshot.HasBaseline)
         {
@@ -1240,6 +1351,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         PersistedFileSampleSummaryText = PersistedFileSampleMemory.Count == 0
             ? "No stored file sample is available yet."
             : string.Join("\n\n", PersistedFileSampleMemory.Take(3).Select(card => $"{card.Eyebrow}: {card.Title}\n{card.Detail}"));
+        PersistedDuplicateSummaryText = PersistedDuplicateMemory.Count == 0
+            ? "No stored duplicate review is available yet."
+            : string.Join("\n\n", PersistedDuplicateMemory.Take(3).Select(card => $"{card.Eyebrow}: {card.Title}\n{card.Detail}"));
         PersistedPlanSummaryText = PersistedPlanMemory.Count == 0
             ? "No stored plans are available yet."
             : string.Join("\n\n", PersistedPlanMemory.Take(3).Select(card => $"{card.Eyebrow}: {card.Title}\n{card.Detail}"));
@@ -1256,6 +1370,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         RefreshScanPairSignals();
         RefreshDriftFileSampleCards();
         RefreshDriftHotspotCards();
+        RefreshScanTrustSignals();
         RefreshScanProvenanceSignals();
         RebuildRecoveryCollections();
         RefreshInventorySignals();
@@ -1276,6 +1391,11 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             persistedInventorySessions = new();
             persistedInventoryDetail = new();
             persistedInventoryFiles = new();
+            persistedSessionDuplicates = new();
+            persistedDuplicateDetail = new();
+            persistedDuplicateActionReview = new();
+            persistedDuplicateCleanupPreview = new();
+            persistedDuplicateCleanupBatchPreview = new();
             persistedDriftSnapshot = new();
             persistedSessionDiff = new();
             persistedDiffFiles = new();
@@ -1292,6 +1412,11 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         {
             persistedInventoryDetail = new();
             persistedInventoryFiles = new();
+            persistedSessionDuplicates = new();
+            persistedDuplicateDetail = new();
+            persistedDuplicateActionReview = new();
+            persistedDuplicateCleanupPreview = new();
+            persistedDuplicateCleanupBatchPreview = new();
             persistedDriftSnapshot = new();
             persistedSessionDiff = new();
             persistedDiffFiles = new();
@@ -1312,7 +1437,113 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             },
             cancellationToken) ?? new InventoryFileListResponse();
 
+        persistedSessionDuplicates = await TryPipeCallAsync<SessionDuplicateListRequest, SessionDuplicateListResponse>(
+            "inventory/session-duplicates",
+            new SessionDuplicateListRequest
+            {
+                SessionId = snapshot.SessionId,
+                Limit = 8
+            },
+            cancellationToken) ?? new SessionDuplicateListResponse();
+
         await RefreshPersistedDriftAsync(cancellationToken);
+    }
+
+    private async Task RefreshDuplicateDetailAsync(CancellationToken cancellationToken)
+    {
+        persistedDuplicateDetail = new();
+        persistedDuplicateActionReview = new();
+        persistedDuplicateCleanupPreview = new();
+        persistedDuplicateCleanupBatchPreview = new();
+
+        if (!persistedInventorySnapshot.HasSession
+            || string.IsNullOrWhiteSpace(persistedInventorySnapshot.SessionId))
+        {
+            RefreshDuplicateDetailCards();
+            return;
+        }
+
+        var leadGroup = GetLeadPersistedDuplicateGroup();
+        if (leadGroup is null || string.IsNullOrWhiteSpace(leadGroup.GroupId))
+        {
+            RefreshDuplicateDetailCards();
+            return;
+        }
+
+        persistedDuplicateDetail = await TryPipeCallAsync<DuplicateGroupDetailRequest, DuplicateGroupDetailResponse>(
+            "inventory/duplicate-detail",
+            new DuplicateGroupDetailRequest
+            {
+                SessionId = persistedInventorySnapshot.SessionId,
+                GroupId = leadGroup.GroupId
+            },
+            cancellationToken) ?? new DuplicateGroupDetailResponse();
+
+        if (persistedDuplicateDetail.Found)
+        {
+            persistedDuplicateActionReview = await TryPipeCallAsync<DuplicateActionReviewRequest, DuplicateActionReviewResponse>(
+                "inventory/duplicate-action-review",
+                new DuplicateActionReviewRequest
+                {
+                    SessionId = persistedInventorySnapshot.SessionId,
+                    GroupId = leadGroup.GroupId
+                },
+                cancellationToken) ?? new DuplicateActionReviewResponse();
+
+            persistedDuplicateCleanupPreview = await TryPipeCallAsync<DuplicateCleanupPreviewRequest, DuplicateCleanupPreviewResponse>(
+                "inventory/duplicate-cleanup-preview",
+                new DuplicateCleanupPreviewRequest
+                {
+                    SessionId = persistedInventorySnapshot.SessionId,
+                    GroupId = leadGroup.GroupId
+                },
+                cancellationToken) ?? new DuplicateCleanupPreviewResponse();
+        }
+
+        persistedDuplicateCleanupBatchPreview = await TryPipeCallAsync<DuplicateCleanupBatchPreviewRequest, DuplicateCleanupBatchPreviewResponse>(
+            "inventory/duplicate-cleanup-batch-preview",
+            new DuplicateCleanupBatchPreviewRequest
+            {
+                SessionId = persistedInventorySnapshot.SessionId,
+                MaxGroups = 8,
+                MaxOperationsPerGroup = 6
+            },
+            cancellationToken) ?? new DuplicateCleanupBatchPreviewResponse();
+
+        RefreshDuplicateDetailCards();
+    }
+
+    private async Task RefreshFileExplainabilityAsync(CancellationToken cancellationToken)
+    {
+        liveFileInspection = new();
+        persistedFileDetail = new();
+
+        var livePath = SelectRepresentativeLiveFilePath();
+        if (!string.IsNullOrWhiteSpace(livePath))
+        {
+            liveFileInspection = await TryPipeCallAsync<FileInspectionRequest, FileInspectionResponse>(
+                "inventory/inspect-file",
+                new FileInspectionRequest { FilePath = livePath },
+                cancellationToken) ?? new FileInspectionResponse();
+        }
+
+        if (persistedInventorySnapshot.HasSession && !string.IsNullOrWhiteSpace(persistedInventorySnapshot.SessionId))
+        {
+            var storedPath = SelectRepresentativeStoredFilePath();
+            if (!string.IsNullOrWhiteSpace(storedPath))
+            {
+                persistedFileDetail = await TryPipeCallAsync<SessionFileDetailRequest, SessionFileDetailResponse>(
+                    "inventory/file-detail",
+                    new SessionFileDetailRequest
+                    {
+                        SessionId = persistedInventorySnapshot.SessionId,
+                        FilePath = storedPath
+                    },
+                    cancellationToken) ?? new SessionFileDetailResponse();
+            }
+        }
+
+        RefreshFileExplainabilityCards();
     }
 
     private async Task RefreshPersistedDriftAsync(CancellationToken cancellationToken)
@@ -1446,6 +1677,526 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             string.IsNullOrWhiteSpace(file.Category) ? "Other" : file.Category,
             file.Name,
             $"{file.Extension} • {FormatBytes(file.SizeBytes)} • {sensitivity}{(file.IsSyncManaged ? " • sync-managed" : string.Empty)}{(file.IsDuplicateCandidate ? " • duplicate candidate" : string.Empty)}");
+    }
+
+    private static AtlasStoredMemoryCard CreateStoredDuplicateCard(DuplicateGroupSummary group)
+    {
+        var title = Path.GetFileName(group.CanonicalPath);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = group.CanonicalPath;
+        }
+
+        var posture = group.HasSensitiveMembers || group.HasSyncManagedMembers || group.HasProtectedMembers
+            ? "REVIEW-HEAVY"
+            : "RETAINED DUPLICATE";
+
+        var riskFlags = new List<string>();
+        if (group.HasSensitiveMembers)
+        {
+            riskFlags.Add("sensitive");
+        }
+
+        if (group.HasSyncManagedMembers)
+        {
+            riskFlags.Add("sync-managed");
+        }
+
+        if (group.HasProtectedMembers)
+        {
+            riskFlags.Add("protected");
+        }
+
+        var riskDetail = riskFlags.Count == 0
+            ? "No elevated retained risk flags."
+            : $"Risk flags: {string.Join(", ", riskFlags)}.";
+
+        return new AtlasStoredMemoryCard(
+            posture,
+            $"{title} ({group.MemberCount:N0} paths)",
+            $"Cleanup {group.CleanupConfidence:P1}; match {group.MatchConfidence:P1}; max sensitivity {group.MaxSensitivity}. Canonical kept because {group.CanonicalReason}. {riskDetail}");
+    }
+
+    private AtlasStoredMemoryCard CreateStoredDuplicateBatchPreviewCard()
+    {
+        var threshold = persistedDuplicateCleanupBatchPreview.ConfidenceThresholdUsed <= 0
+            ? profile.DuplicateAutoDeleteConfidenceThreshold
+            : persistedDuplicateCleanupBatchPreview.ConfidenceThresholdUsed;
+
+        var title = persistedDuplicateCleanupBatchPreview.GroupsPreviewable == 0
+            ? "No groups are previewable yet"
+            : $"{persistedDuplicateCleanupBatchPreview.GroupsPreviewable:N0} groups previewable across the retained session";
+
+        var detail = $"{persistedDuplicateCleanupBatchPreview.GroupsEvaluated:N0} groups evaluated under the current {threshold:P0} threshold. "
+            + $"{persistedDuplicateCleanupBatchPreview.GroupsBlocked:N0} groups stay blocked, and Atlas would stage {persistedDuplicateCleanupBatchPreview.TotalOperationCount:N0} quarantine operations across the bounded preview window.";
+
+        return new AtlasStoredMemoryCard(
+            "SESSION CLEANUP PREVIEW",
+            title,
+            detail);
+    }
+
+    private static AtlasStoredMemoryCard CreateStoredDuplicateBatchGroupCard(BatchGroupPreviewSummary group)
+    {
+        var title = Path.GetFileName(group.CanonicalPath);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = group.CanonicalPath;
+        }
+
+        var posture = group.IsPreviewable
+            ? "TOP PREVIEWABLE GROUP"
+            : "TOP BLOCKED GROUP";
+
+        var notes = group.ActionNotes
+            .Where(static note => !string.IsNullOrWhiteSpace(note))
+            .Take(2)
+            .ToList();
+        var blocked = group.BlockedReasons
+            .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+            .Take(2)
+            .ToList();
+
+        var noteDetail = notes.Count == 0
+            ? string.Empty
+            : $" Notes: {string.Join(" ", notes.Select(note => $"{note}."))}";
+
+        var blockedDetail = blocked.Count == 0
+            ? string.Empty
+            : $" Blocked by: {string.Join("; ", blocked)}.";
+
+        return new AtlasStoredMemoryCard(
+            posture,
+            $"{title} ({group.OperationCount:N0} ops, {group.CleanupConfidence:P0} cleanup confidence)",
+            $"{FormatBatchGroupPostureLabel(group)}.{blockedDetail}{noteDetail}");
+    }
+
+    private void RefreshDuplicateDetailCards()
+    {
+        var cards = new List<AtlasStoredMemoryCard>();
+
+        if (persistedDuplicateDetail.Found)
+        {
+            var title = Path.GetFileName(persistedDuplicateDetail.CanonicalPath);
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = persistedDuplicateDetail.CanonicalPath;
+            }
+
+            cards.Add(new AtlasStoredMemoryCard(
+                "RETAINED GROUP",
+                $"{title} ({persistedDuplicateDetail.MemberCount:N0} paths)",
+                BuildDuplicateDetailSummary()));
+
+            if (persistedDuplicateActionReview.Found)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "CLEANUP POSTURE",
+                    FormatDuplicateActionPostureTitle(persistedDuplicateActionReview),
+                    BuildDuplicateActionReviewDetail()));
+            }
+
+            if (persistedDuplicateCleanupPreview.Found)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "CLEANUP PREVIEW",
+                    FormatDuplicateCleanupPreviewTitle(),
+                    BuildDuplicateCleanupPreviewDetail()));
+            }
+
+            if (persistedDuplicateDetail.Evidence.Count > 0)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "GROUP EVIDENCE",
+                    $"{persistedDuplicateDetail.Evidence.Count:N0} bounded signals",
+                    BuildDuplicateEvidenceDetail(persistedDuplicateDetail.Evidence)));
+            }
+
+            if (persistedDuplicateDetail.MemberPaths.Count > 0)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "MEMBER SAMPLE",
+                    $"{Math.Min(4, persistedDuplicateDetail.MemberPaths.Count):N0} of {persistedDuplicateDetail.MemberPaths.Count:N0} retained paths",
+                    BuildDuplicateMemberDetail(persistedDuplicateDetail.MemberPaths)));
+            }
+
+            if (persistedDuplicateCleanupPreview.Operations.Count > 0)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "OPERATION SAMPLE",
+                    $"{Math.Min(4, persistedDuplicateCleanupPreview.Operations.Count):N0} of {persistedDuplicateCleanupPreview.OperationCount:N0} previewed cleanup operations",
+                    BuildDuplicateCleanupOperationDetail()));
+            }
+        }
+
+        if (cards.Count == 0)
+        {
+            cards.Add(new AtlasStoredMemoryCard(
+                IsLiveMode ? "AWAITING DUPLICATE DRILL-IN" : "SERVICE OFFLINE",
+                IsLiveMode ? "No retained duplicate detail yet" : "Duplicate drill-in unavailable",
+                IsLiveMode
+                    ? "Atlas will inspect one retained duplicate group from the latest stored session once duplicate memory is available."
+                    : "Retained duplicate drill-in depends on service read routes, so this lane stays empty while preview mode is active."));
+        }
+
+        ReplaceAll(DuplicateDetailCards, cards);
+
+        DuplicateDetailSummaryText = persistedDuplicateDetail.Found
+            ? $"Atlas retained duplicate drill-in for {ShortPath(persistedDuplicateDetail.CanonicalPath)} with {persistedDuplicateDetail.Evidence.Count:N0} bounded evidence signals and {persistedDuplicateDetail.MemberCount:N0} member paths.{(string.IsNullOrWhiteSpace(BuildDuplicateActionSummarySentence()) ? string.Empty : $" {BuildDuplicateActionSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateCleanupPreviewSummarySentence()) ? string.Empty : $" {BuildDuplicateCleanupPreviewSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateCleanupBatchSummarySentence()) ? string.Empty : $" {BuildDuplicateCleanupBatchSummarySentence()}")}"
+            : IsLiveMode
+                ? "Atlas is waiting for one retained duplicate group before it can explain why a duplicate set is trustworthy, risky, or cleanup-eligible."
+                : "Retained duplicate drill-in remains empty while the shell is in preview mode and the service detail route is offline.";
+    }
+
+    private void RefreshFileExplainabilityCards()
+    {
+        var cards = new List<AtlasStoredMemoryCard>();
+
+        if (liveFileInspection.Found)
+        {
+            cards.Add(new AtlasStoredMemoryCard(
+                "LIVE INSPECTION",
+                string.IsNullOrWhiteSpace(liveFileInspection.Name) ? ShortPath(liveFileInspection.Path) : liveFileInspection.Name,
+                BuildLiveInspectionDetail()));
+        }
+
+        if (liveFileInspection.SensitivityEvidence.Count > 0)
+        {
+            cards.Add(new AtlasStoredMemoryCard(
+                "SENSITIVITY EVIDENCE",
+                $"{liveFileInspection.Sensitivity} sensitivity",
+                BuildSensitivityEvidenceDetail(liveFileInspection.SensitivityEvidence)));
+        }
+
+        if (persistedFileDetail.Found)
+        {
+            cards.Add(new AtlasStoredMemoryCard(
+                "STORED FILE DETAIL",
+                string.IsNullOrWhiteSpace(persistedFileDetail.Name) ? ShortPath(persistedFileDetail.Path) : persistedFileDetail.Name,
+                BuildStoredFileDetailSummary()));
+        }
+
+        if (cards.Count == 0)
+        {
+            cards.Add(new AtlasStoredMemoryCard(
+                IsLiveMode ? "AWAITING INSPECTION" : "SERVICE OFFLINE",
+                IsLiveMode ? "No representative file inspected yet" : "File explainability unavailable",
+                IsLiveMode
+                    ? "Atlas will inspect one representative live or retained file through the service once scan memory is available."
+                    : "File explainability uses service inspection routes, so the shell is keeping this lane empty while preview mode is active."));
+        }
+
+        ReplaceAll(FileExplainabilityCards, cards);
+
+        FileExplainabilitySummaryText = liveFileInspection.Found && persistedFileDetail.Found
+            ? $"Atlas is comparing live inspection truth for {ShortPath(liveFileInspection.Path)} with retained detail for {ShortPath(persistedFileDetail.Path)}. {liveFileInspection.SensitivityEvidence.Count:N0} bounded sensitivity signals are available for the live file."
+            : liveFileInspection.Found
+                ? $"Atlas inspected {ShortPath(liveFileInspection.Path)} through the live service route and retained {liveFileInspection.SensitivityEvidence.Count:N0} bounded sensitivity signals."
+                : persistedFileDetail.Found
+                    ? $"Atlas could not inspect a live file right now, but retained detail for {ShortPath(persistedFileDetail.Path)} is available from the latest stored session."
+                    : IsLiveMode
+                        ? "Atlas is waiting for a representative live or retained file before it can explain why one file matters."
+                        : "File explainability remains empty while the shell is in preview mode and the service inspection routes are offline.";
+    }
+
+    private string BuildLiveInspectionDetail()
+    {
+        var posture = new List<string>();
+        if (liveFileInspection.IsSyncManaged)
+        {
+            posture.Add("sync-managed");
+        }
+
+        if (liveFileInspection.IsDuplicateCandidate)
+        {
+            posture.Add("duplicate candidate");
+        }
+
+        posture.Add(liveFileInspection.ContentSniffSucceeded ? "sniffed" : "extension-derived");
+        posture.Add(liveFileInspection.HasContentFingerprint ? "fingerprint present" : "no fingerprint");
+
+        return $"{liveFileInspection.Category} • {liveFileInspection.MimeType} • {FormatBytes(liveFileInspection.SizeBytes)} • {liveFileInspection.Sensitivity} sensitivity. {string.Join(", ", posture)}. Observed {FormatUnixTimestamp(liveFileInspection.LastModifiedUnixTimeSeconds)}.";
+    }
+
+    private string BuildStoredFileDetailSummary()
+    {
+        var posture = new List<string>();
+        if (persistedFileDetail.IsSyncManaged)
+        {
+            posture.Add("sync-managed");
+        }
+
+        if (persistedFileDetail.IsDuplicateCandidate)
+        {
+            posture.Add("duplicate candidate");
+        }
+
+        if (posture.Count == 0)
+        {
+            posture.Add("routine posture");
+        }
+
+        return $"{persistedFileDetail.Category} • {FormatBytes(persistedFileDetail.SizeBytes)} • {persistedFileDetail.Sensitivity} sensitivity. {string.Join(", ", posture)}. Last retained {FormatUnixTimestamp(persistedFileDetail.LastModifiedUnixTimeSeconds)}.";
+    }
+
+    private string BuildDuplicateDetailSummary()
+    {
+        var riskFlags = new List<string>();
+        if (persistedDuplicateDetail.HasSensitiveMembers)
+        {
+            riskFlags.Add("sensitive");
+        }
+
+        if (persistedDuplicateDetail.HasSyncManagedMembers)
+        {
+            riskFlags.Add("sync-managed");
+        }
+
+        if (persistedDuplicateDetail.HasProtectedMembers)
+        {
+            riskFlags.Add("protected");
+        }
+
+        var riskDetail = riskFlags.Count == 0
+            ? "No elevated retained risk flags."
+            : $"Risk flags: {string.Join(", ", riskFlags)}.";
+
+        var actionSummary = BuildDuplicateActionSummarySentence();
+        return $"Cleanup {persistedDuplicateDetail.CleanupConfidence:P1}; match {persistedDuplicateDetail.MatchConfidence:P1}; max sensitivity {persistedDuplicateDetail.MaxSensitivity}. Canonical kept because {persistedDuplicateDetail.CanonicalReason}. {riskDetail}{(string.IsNullOrWhiteSpace(actionSummary) ? string.Empty : $" {actionSummary}")}";
+    }
+
+    private string BuildDuplicateActionReviewDetail()
+    {
+        if (!persistedDuplicateActionReview.Found)
+        {
+            return "Cleanup posture is not available yet.";
+        }
+
+        var threshold = persistedDuplicateActionReview.ConfidenceThresholdUsed <= 0
+            ? profile.DuplicateAutoDeleteConfidenceThreshold
+            : persistedDuplicateActionReview.ConfidenceThresholdUsed;
+
+        var status = persistedDuplicateActionReview.IsCleanupEligible
+            ? $"Eligible under the current {threshold:P0} cleanup-confidence threshold."
+            : persistedDuplicateActionReview.RequiresReview
+                ? $"Not auto-eligible under the current {threshold:P0} threshold, so Atlas keeps this group in review."
+                : $"Not eligible for cleanup under the current {threshold:P0} threshold.";
+
+        var blocked = persistedDuplicateActionReview.BlockedReasons
+            .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+            .Take(3)
+            .ToList();
+        var blockedDetail = blocked.Count == 0
+            ? string.Empty
+            : $" Blocked by: {string.Join("; ", blocked)}.";
+
+        var notes = persistedDuplicateActionReview.ActionNotes
+            .Where(static note => !string.IsNullOrWhiteSpace(note))
+            .Take(3)
+            .ToList();
+        var noteDetail = notes.Count == 0
+            ? string.Empty
+            : $" Notes: {string.Join(" ", notes.Select(note => $"{note}."))}";
+
+        return $"{status}{blockedDetail}{noteDetail}";
+    }
+
+    private string BuildDuplicateActionSummarySentence()
+    {
+        if (!persistedDuplicateActionReview.Found)
+        {
+            return string.Empty;
+        }
+
+        var posture = FormatDuplicateActionPostureSummaryLabel(persistedDuplicateActionReview);
+        var blockedReason = persistedDuplicateActionReview.BlockedReasons
+            .FirstOrDefault(static reason => !string.IsNullOrWhiteSpace(reason));
+
+        if (persistedDuplicateActionReview.IsCleanupEligible)
+        {
+            return $"Recommended posture is {posture}.";
+        }
+
+        return string.IsNullOrWhiteSpace(blockedReason)
+            ? $"Recommended posture is {posture}."
+            : $"Recommended posture is {posture} because {blockedReason}.";
+    }
+
+    private string BuildDuplicateCleanupPreviewSummarySentence()
+    {
+        if (!persistedDuplicateCleanupPreview.Found)
+        {
+            return string.Empty;
+        }
+
+        if (persistedDuplicateCleanupPreview.IsPreviewAvailable && persistedDuplicateCleanupPreview.OperationCount > 0)
+        {
+            return $"{persistedDuplicateCleanupPreview.OperationCount:N0} cleanup operations are previewable while keeping {ShortPath(persistedDuplicateCleanupPreview.CanonicalPath)} as canonical.";
+        }
+
+        var blockedReason = persistedDuplicateCleanupPreview.BlockedReasons
+            .FirstOrDefault(static reason => !string.IsNullOrWhiteSpace(reason));
+
+        return string.IsNullOrWhiteSpace(blockedReason)
+            ? "Cleanup preview is not available under the current policy."
+            : $"Cleanup preview is not available because {blockedReason}.";
+    }
+
+    private string BuildDuplicateCleanupBatchSummarySentence()
+    {
+        if (!persistedDuplicateCleanupBatchPreview.Found)
+        {
+            return string.Empty;
+        }
+
+        if (persistedDuplicateCleanupBatchPreview.GroupsPreviewable > 0)
+        {
+            return $"{persistedDuplicateCleanupBatchPreview.GroupsPreviewable:N0} retained groups are previewable across the bounded session view, representing {persistedDuplicateCleanupBatchPreview.TotalOperationCount:N0} total cleanup operations.";
+        }
+
+        return persistedDuplicateCleanupBatchPreview.GroupsEvaluated == 0
+            ? "No retained duplicate groups were available for session-level cleanup preview."
+            : $"{persistedDuplicateCleanupBatchPreview.GroupsBlocked:N0} retained groups are currently blocked from cleanup preview under the current policy.";
+    }
+
+    private static string FormatDuplicateActionPostureTitle(DuplicateActionReviewResponse review) =>
+        review.RecommendedPosture switch
+        {
+            DuplicateActionPosture.QuarantineDuplicates when review.IsCleanupEligible => "Cleanup eligible now",
+            DuplicateActionPosture.QuarantineDuplicates => "Quarantine duplicates after review",
+            DuplicateActionPosture.Review => "Review before cleanup",
+            _ => "Keep canonical only"
+        };
+
+    private static string FormatDuplicateActionPostureSummaryLabel(DuplicateActionReviewResponse review) =>
+        review.RecommendedPosture switch
+        {
+            DuplicateActionPosture.QuarantineDuplicates when review.IsCleanupEligible => "quarantine duplicates",
+            DuplicateActionPosture.QuarantineDuplicates => "review before quarantining duplicates",
+            DuplicateActionPosture.Review => "review before cleanup",
+            _ => "keep the canonical only"
+        };
+
+    private string FormatDuplicateCleanupPreviewTitle() =>
+        persistedDuplicateCleanupPreview.RecommendedPosture switch
+        {
+            DuplicateActionPosture.QuarantineDuplicates when persistedDuplicateCleanupPreview.IsPreviewAvailable
+                => $"{persistedDuplicateCleanupPreview.OperationCount:N0} cleanup operations ready",
+            DuplicateActionPosture.QuarantineDuplicates
+                => "Cleanup preview blocked behind review",
+            DuplicateActionPosture.Review
+                => "Review before previewing cleanup",
+            _ => "Keep canonical only"
+        };
+
+    private string BuildDuplicateCleanupPreviewDetail()
+    {
+        if (!persistedDuplicateCleanupPreview.Found)
+        {
+            return "Cleanup preview is not available yet.";
+        }
+
+        var threshold = persistedDuplicateCleanupPreview.ConfidenceThresholdUsed <= 0
+            ? profile.DuplicateAutoDeleteConfidenceThreshold
+            : persistedDuplicateCleanupPreview.ConfidenceThresholdUsed;
+
+        var posture = persistedDuplicateCleanupPreview.IsPreviewAvailable
+            ? $"{persistedDuplicateCleanupPreview.OperationCount:N0} cleanup operations are previewable under the current {threshold:P0} threshold."
+            : $"No cleanup operations are previewable under the current {threshold:P0} threshold.";
+
+        var canonicalDetail = string.IsNullOrWhiteSpace(persistedDuplicateCleanupPreview.CanonicalPath)
+            ? string.Empty
+            : $" Canonical retained path: {ShortPath(persistedDuplicateCleanupPreview.CanonicalPath)}.";
+
+        var blocked = persistedDuplicateCleanupPreview.BlockedReasons
+            .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+            .Take(3)
+            .ToList();
+        var blockedDetail = blocked.Count == 0
+            ? string.Empty
+            : $" Blocked by: {string.Join("; ", blocked)}.";
+
+        var notes = persistedDuplicateCleanupPreview.ActionNotes
+            .Where(static note => !string.IsNullOrWhiteSpace(note))
+            .Take(3)
+            .ToList();
+        var notesDetail = notes.Count == 0
+            ? string.Empty
+            : $" Notes: {string.Join(" ", notes.Select(note => $"{note}."))}";
+
+        return $"{posture}{canonicalDetail}{blockedDetail}{notesDetail}";
+    }
+
+    private string BuildDuplicateCleanupOperationDetail()
+    {
+        var sample = persistedDuplicateCleanupPreview.Operations
+            .Where(static operation => !string.IsNullOrWhiteSpace(operation.SourcePath))
+            .Take(4)
+            .Select(operation =>
+            {
+                var sensitivity = string.IsNullOrWhiteSpace(operation.Sensitivity)
+                    ? "unspecified sensitivity"
+                    : operation.Sensitivity.ToLowerInvariant();
+                var detail = string.IsNullOrWhiteSpace(operation.Description)
+                    ? operation.Kind
+                    : operation.Description;
+                return $"{ShortPath(operation.SourcePath)} -> {detail} ({operation.Confidence:P0}, {sensitivity})";
+            })
+            .ToList();
+
+        return sample.Count == 0
+            ? "No cleanup operations were returned."
+            : string.Join(" | ", sample);
+    }
+
+    private static string FormatBatchGroupPostureLabel(BatchGroupPreviewSummary group) =>
+        group.RecommendedPosture switch
+        {
+            DuplicateActionPosture.QuarantineDuplicates when group.IsPreviewable => $"Atlas would quarantine duplicates while keeping {ShortPath(group.CanonicalPath)} as canonical",
+            DuplicateActionPosture.QuarantineDuplicates => "Atlas still recommends quarantine posture, but the group is blocked from preview under current policy",
+            DuplicateActionPosture.Review => "Atlas keeps this group in review before any cleanup preview becomes actionable",
+            _ => "Atlas would keep only the canonical path and avoid staging duplicate cleanup"
+        };
+
+    private static string BuildDuplicateEvidenceDetail(IEnumerable<DuplicateEvidenceSummary> evidence)
+    {
+        var sample = evidence
+            .Where(item => !string.IsNullOrWhiteSpace(item.Signal))
+            .Take(5)
+            .Select(item => string.IsNullOrWhiteSpace(item.Detail)
+                ? item.Signal
+                : $"{item.Signal}: {item.Detail}")
+            .ToList();
+
+        return sample.Count == 0
+            ? "No bounded duplicate evidence signals were returned."
+            : string.Join(" ", sample.Select(item => $"{item}."));
+    }
+
+    private static string BuildDuplicateMemberDetail(IEnumerable<string> memberPaths)
+    {
+        var sample = memberPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Take(4)
+            .Select(ShortPath)
+            .ToList();
+
+        return sample.Count == 0
+            ? "No retained member paths were returned."
+            : string.Join(" | ", sample);
+    }
+
+    private static string BuildSensitivityEvidenceDetail(IEnumerable<SensitivityEvidenceSummary> evidence)
+    {
+        var sample = evidence
+            .Where(item => !string.IsNullOrWhiteSpace(item.Signal))
+            .Take(4)
+            .Select(item => $"{item.Signal}: {item.Detail}")
+            .ToList();
+
+        return sample.Count == 0
+            ? "No bounded sensitivity evidence signals were returned."
+            : string.Join(" ", sample.Select(item => $"{item}."));
     }
 
     private static string BuildStoredFileSampleDetail(IEnumerable<InventoryFileSummary> files)
@@ -1630,6 +2381,30 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         return $"{triggerLabel}, {buildModeLabel}, {deltaSourceLabel}, {baselineLabel}, {trustLabel}.{note}";
     }
 
+    private (bool HasStoredSession, string SessionId, bool IsTrusted, string BuildMode, string BuildModeLabel, string TriggerLabel, string DeltaSourceLabel, string BaselineLabel, string Note) GetStoredScanTrustContext()
+    {
+        var hasStoredSession = persistedInventorySnapshot.HasSession;
+        var trigger = FirstNonEmpty(persistedInventoryDetail.Trigger, persistedInventorySnapshot.Trigger);
+        var buildMode = FirstNonEmpty(persistedInventoryDetail.BuildMode, persistedInventorySnapshot.BuildMode);
+        var deltaSource = FirstNonEmpty(persistedInventoryDetail.DeltaSource, persistedInventorySnapshot.DeltaSource);
+        var baseline = FirstNonEmpty(persistedInventoryDetail.BaselineSessionId, persistedInventorySnapshot.BaselineSessionId);
+        var note = FirstNonEmpty(persistedInventoryDetail.CompositionNote, persistedInventorySnapshot.CompositionNote);
+        var isTrusted = persistedInventoryDetail.Found || persistedInventorySnapshot.HasSession
+            ? (persistedInventoryDetail.Found ? persistedInventoryDetail.IsTrusted : persistedInventorySnapshot.IsTrusted)
+            : true;
+
+        return (
+            hasStoredSession,
+            persistedInventorySnapshot.SessionId,
+            isTrusted,
+            buildMode,
+            FormatBuildModeLabel(buildMode),
+            FormatTriggerLabel(trigger),
+            FormatDeltaSourceLabel(deltaSource, buildMode),
+            FormatBaselineLabel(baseline),
+            note);
+    }
+
     private static string FormatHistoryTimestamp(string timestamp)
     {
         return DateTimeOffset.TryParse(timestamp, out var parsed)
@@ -1656,6 +2431,16 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
     private static string ShortId(string value) =>
         string.IsNullOrWhiteSpace(value) ? "unknown" : value[..Math.Min(8, value.Length)];
+
+    private static string ShortPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "unknown path";
+        }
+
+        return path.Length <= 72 ? path : $"{path[..24]}...{path[^36..]}";
+    }
 
     private static string FormatSignedDelta(int delta, string singular, string plural)
     {
@@ -1688,6 +2473,41 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         if (bytes == 0) return "0 B";
         var prefix = bytes > 0 ? "+" : "";
         return $"{prefix}{FormatBytes(bytes)}";
+    }
+
+    private static string FormatOptimizationKind(OptimizationKind kind) =>
+        kind switch
+        {
+            OptimizationKind.TemporaryFiles => "Temporary files",
+            OptimizationKind.CacheCleanup => "Cache cleanup",
+            OptimizationKind.DuplicateArchives => "Duplicate archives",
+            OptimizationKind.UserStartupEntry => "Startup clutter",
+            OptimizationKind.LowDiskPressure => "Low disk pressure",
+            OptimizationKind.ScheduledTask => "Scheduled task",
+            OptimizationKind.BackgroundApplication => "Background application",
+            _ => "Optimization finding"
+        };
+
+    private static string BuildOptimizationDisposition(OptimizationFinding finding) =>
+        finding.CanAutoFix
+            ? (finding.RequiresApproval ? "Auto-fix after approval" : "Auto-fix ready")
+            : "Recommendation only";
+
+    private static string BuildOptimizationKindSummary(IEnumerable<OptimizationFinding> findings)
+    {
+        var labels = findings
+            .Select(finding => FormatOptimizationKind(finding.Kind).ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(3)
+            .ToList();
+
+        return labels.Count switch
+        {
+            0 => "no active pressure",
+            1 => labels[0],
+            2 => $"{labels[0]} and {labels[1]}",
+            _ => $"{labels[0]}, {labels[1]}, and {labels[2]}"
+        };
     }
 
     private static string DescribeCadence(InventorySessionSummary latest, InventorySessionSummary previous)
@@ -1732,6 +2552,8 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
         ConnectionModeLabel = "Preview mode";
         ConnectionModeDetail = "The shell is falling back to local read-only heuristics. Execution remains blocked until the service is reachable.";
+        liveFileInspection = new();
+        persistedFileDetail = new();
         RefreshInventorySignals();
         RefreshSignalCollections();
         RefreshHistoryMetrics();
@@ -1784,6 +2606,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         RefreshScanPairSignals();
         RefreshDriftFileSampleCards();
         RefreshDriftHotspotCards();
+        RefreshScanTrustSignals();
         RefreshScanProvenanceSignals();
 
         ReplaceAll(CurrentStructureGroups, BuildCurrentStructureGroups());
@@ -1848,6 +2671,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         ReplaceAll(ProposedStructureGroups, BuildProposedStructureGroups());
         PlanDiffNarrativeText = BuildPlanDiffNarrative(createCount, moveCount, quarantineCount, reviewCount);
         RefreshPlanSignals();
+        RefreshScanTrustSignals();
         RefreshHistoryMetrics();
 
         OnPropertyChanged(nameof(HasPlan));
@@ -1860,29 +2684,28 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
     private void ApplyOptimizationState()
     {
-        var autoFixCount = currentOptimization.Findings.Count(finding => finding.CanAutoFix);
+        var autoFixReadyCount = currentOptimization.Findings.Count(finding => finding.CanAutoFix && !finding.RequiresApproval);
         var approvalCount = currentOptimization.Findings.Count(finding => finding.RequiresApproval);
-        var manualCount = currentOptimization.Findings.Count - autoFixCount;
+        var manualCount = currentOptimization.Findings.Count(finding => !finding.CanAutoFix);
+        var kindSummary = BuildOptimizationKindSummary(currentOptimization.Findings);
 
         ReplaceAll(OptimizationFindings, currentOptimization.Findings.Select(finding =>
         {
-            var disposition = finding.CanAutoFix
-                ? (finding.RequiresApproval ? "Auto-fix after approval" : "Auto-fix ready")
-                : "Recommendation only";
-
             return new AtlasOptimizationCard(
-                finding.Kind.ToString(),
+                FormatOptimizationKind(finding.Kind),
                 finding.Target,
                 finding.Evidence,
-                disposition,
+                BuildOptimizationDisposition(finding),
                 finding.RollbackPlan);
         }));
 
-        OptimizationSummary = $"{autoFixCount:N0} safe-fix opportunities, {manualCount:N0} recommendation-only findings.";
+        OptimizationSummary = currentOptimization.Findings.Count == 0
+            ? "No safe optimization pressure is active right now."
+            : $"{autoFixReadyCount:N0} auto-fix ready, {approvalCount:N0} approval-gated, {manualCount:N0} recommendation-only across {kindSummary}.";
 
         ReplaceAll(OptimizationMetrics,
         [
-            new AtlasMetricCard("AUTO-FIX READY", $"{autoFixCount:N0}", "Curated low-risk fixes inside Atlas' safe optimization envelope."),
+            new AtlasMetricCard("AUTO-FIX READY", $"{autoFixReadyCount:N0}", "Curated low-risk fixes Atlas could apply without another approval stop."),
             new AtlasMetricCard("APPROVAL GATES", $"{approvalCount:N0}", "Findings that still need explicit review before Atlas touches them."),
             new AtlasMetricCard("RECOMMENDATION ONLY", $"{manualCount:N0}", "Signals Atlas will explain but not auto-apply.")
         ]);
@@ -1925,12 +2748,15 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     {
         RefreshInventorySignals();
         RefreshInventoryMemoryCards();
+        RefreshDuplicateDetailCards();
+        RefreshFileExplainabilityCards();
         RefreshScanContinuitySignals();
         RefreshRescanStoryCards();
         RefreshDriftReviewCards();
         RefreshScanPairSignals();
         RefreshDriftFileSampleCards();
         RefreshDriftHotspotCards();
+        RefreshScanTrustSignals();
         RefreshScanProvenanceSignals();
 
         if (currentPlan.Plan.Operations.Count > 0)
@@ -1956,16 +2782,41 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             ? "Sync-managed folders stay out by default so Atlas does not collide with cloud reconciliation or user expectations."
             : "Sync-managed folders are allowed into scope, so destructive moves need extra review discipline.";
 
-        var duplicateValue = currentScan.Duplicates.Count switch
+        var hasLiveDuplicateEvidence = currentScan.Duplicates.Count > 0;
+        var effectiveDuplicateGroupCount = hasLiveDuplicateEvidence
+            ? currentScan.Duplicates.Count
+            : persistedSessionDuplicates.TotalCount;
+        var effectiveRiskyDuplicateGroups = hasLiveDuplicateEvidence
+            ? CountRiskyDuplicateGroups()
+            : CountRiskyPersistedDuplicateGroups();
+        var effectiveHighConfidenceDuplicateGroups = hasLiveDuplicateEvidence
+            ? CountHighConfidenceDuplicateGroups()
+            : CountHighConfidencePersistedDuplicateGroups();
+        var leadLiveDuplicate = GetLeadDuplicateGroup();
+        var leadPersistedDuplicate = GetLeadPersistedDuplicateGroup();
+        var leadDuplicatePath = hasLiveDuplicateEvidence ? leadLiveDuplicate?.CanonicalPath : leadPersistedDuplicate?.CanonicalPath;
+        var leadDuplicateReason = hasLiveDuplicateEvidence ? leadLiveDuplicate?.CanonicalReason : leadPersistedDuplicate?.CanonicalReason;
+
+        var duplicateValue = effectiveDuplicateGroupCount switch
         {
             0 => "Low",
             <= 5 => "Watched",
             <= 20 => "Elevated",
             _ => "Heavy"
         };
-        var duplicateDetail = currentScan.Duplicates.Count == 0
-            ? "No duplicate groups are currently surfacing in the live or preview inventory."
-            : $"{currentScan.Duplicates.Count:N0} conservative duplicate groups are visible for review in the latest scan.";
+        var duplicateDetail = effectiveDuplicateGroupCount == 0
+            ? "No duplicate groups are currently surfacing in the live inventory or the latest retained scan."
+            : effectiveRiskyDuplicateGroups > 0
+                ? hasLiveDuplicateEvidence
+                    ? $"{effectiveDuplicateGroupCount:N0} duplicate groups are visible in the current scan, and {effectiveRiskyDuplicateGroups:N0} include sensitive, sync-managed, or protected members that keep cleanup conservative."
+                    : $"{effectiveDuplicateGroupCount:N0} retained duplicate groups are available from the latest stored scan, and {effectiveRiskyDuplicateGroups:N0} stay review-heavy because they include sensitive, sync-managed, or protected members."
+                : string.IsNullOrWhiteSpace(leadDuplicatePath) || string.IsNullOrWhiteSpace(leadDuplicateReason)
+                    ? hasLiveDuplicateEvidence
+                        ? $"{effectiveDuplicateGroupCount:N0} conservative duplicate groups are visible for review in the latest scan."
+                        : $"{effectiveDuplicateGroupCount:N0} retained duplicate groups are available for later review from the latest stored scan."
+                    : hasLiveDuplicateEvidence
+                        ? $"{effectiveHighConfidenceDuplicateGroups:N0} groups meet the current cleanup-confidence threshold. Lead canonical {ShortPath(leadDuplicatePath)} is kept because {leadDuplicateReason}."
+                        : $"{effectiveHighConfidenceDuplicateGroups:N0} retained groups already meet the cleanup-confidence threshold. Lead canonical {ShortPath(leadDuplicatePath)} is kept because {leadDuplicateReason}.";
 
         var constrainedVolumes = currentScan.Volumes.Count(volume =>
             volume.TotalSizeBytes > 0
@@ -2052,7 +2903,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 : $"{currentScan.Duplicates.Count:N0} duplicate groups",
             currentScan.Duplicates.Count == 0
                 ? "Atlas has not surfaced conservative duplicate candidates in the current inventory."
-                : "Duplicate groups are available for quarantine-first review in the planning lane."));
+                : BuildDuplicateInventoryMemoryDetail()));
 
         if (persistedInventorySnapshot.HasSession)
         {
@@ -2078,11 +2929,18 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                     ? "Awaiting stored file rows"
                     : $"{persistedInventoryFiles.TotalCount:N0} stored file rows",
                 BuildStoredFileSampleDetail(persistedInventoryFiles.Files)));
+
+            cards.Add(new AtlasStoredMemoryCard(
+                "STORED DUPLICATE REVIEW",
+                persistedSessionDuplicates.TotalCount == 0
+                    ? "No retained duplicate groups"
+                    : $"{persistedSessionDuplicates.TotalCount:N0} retained duplicate groups",
+                BuildStoredDuplicateInventoryMemoryDetail()));
         }
 
         InventoryMemorySummaryText = persistedInventorySnapshot.HasSession
-            ? $"{currentScan.Inventory.Count:N0} files are active in the current shell session, while the latest stored scan retained {persistedInventorySnapshot.FilesScanned:N0} files and {persistedInventorySessions.Sessions.Count:N0} recent sessions for later review."
-            : $"{currentScan.Inventory.Count:N0} files, {currentScan.Volumes.Count:N0} mounted volumes, and {currentScan.Duplicates.Count:N0} duplicate groups define the current scan session.";
+            ? $"{currentScan.Inventory.Count:N0} files are active in the current shell session, while the latest stored scan retained {persistedInventorySnapshot.FilesScanned:N0} files, {persistedSessionDuplicates.TotalCount:N0} duplicate review groups, and {persistedInventorySessions.Sessions.Count:N0} recent sessions for later review."
+            : $"{currentScan.Inventory.Count:N0} files, {currentScan.Volumes.Count:N0} mounted volumes, and {currentScan.Duplicates.Count:N0} duplicate groups define the current scan session. {CountHighConfidenceDuplicateGroups():N0} currently meet the cleanup-confidence threshold.";
         ReplaceAll(InventoryMemoryCards, cards);
     }
 
@@ -2904,6 +3762,126 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 : "Atlas can explain the current shell session origin, but it still needs stored scan lineage for deeper provenance.";
     }
 
+    private void RefreshScanTrustSignals()
+    {
+        var hasCurrentScan = currentScan.Inventory.Count > 0;
+        var hasStoredSession = persistedInventorySnapshot.HasSession;
+        if (!hasCurrentScan && !hasStoredSession)
+        {
+            ReplaceAll(ScanTrustSignals,
+            [
+                new AtlasSignalCard(
+                    "TRUST POSTURE",
+                    "Awaiting scan",
+                    "Atlas needs a live or preview scan before it can grade the inventory trust posture.")
+            ]);
+
+            ScanTrustSummaryText = "Scan trust posture will appear here once Atlas can grade live or stored inventory confidence.";
+            return;
+        }
+
+        var storedTrigger = FirstNonEmpty(persistedInventoryDetail.Trigger, persistedInventorySnapshot.Trigger);
+        var storedBuildMode = FirstNonEmpty(persistedInventoryDetail.BuildMode, persistedInventorySnapshot.BuildMode);
+        var storedDeltaSource = FirstNonEmpty(persistedInventoryDetail.DeltaSource, persistedInventorySnapshot.DeltaSource);
+        var storedBaseline = FirstNonEmpty(persistedInventoryDetail.BaselineSessionId, persistedInventorySnapshot.BaselineSessionId);
+        var storedNote = FirstNonEmpty(persistedInventoryDetail.CompositionNote, persistedInventorySnapshot.CompositionNote);
+        var storedIsTrusted = persistedInventoryDetail.Found || persistedInventorySnapshot.HasSession
+            ? (persistedInventoryDetail.Found ? persistedInventoryDetail.IsTrusted : persistedInventorySnapshot.IsTrusted)
+            : true;
+        var storedTriggerLabel = FormatTriggerLabel(storedTrigger);
+        var storedBuildModeLabel = FormatBuildModeLabel(storedBuildMode);
+        var storedDeltaSourceLabel = FormatDeltaSourceLabel(storedDeltaSource, storedBuildMode);
+        var storedBaselineLabel = FormatBaselineLabel(storedBaseline);
+
+        var trustPostureValue = !hasStoredSession
+            ? IsLiveMode
+                ? "Stored baseline pending"
+                : "Preview only"
+            : !storedIsTrusted
+                ? "Degraded retained session"
+                : string.Equals(storedBuildMode, "IncrementalComposition", StringComparison.OrdinalIgnoreCase)
+                    ? "Trusted incremental"
+                    : string.Equals(storedBuildMode, "FullRescan", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(storedBuildMode)
+                        ? "Trusted full rescan"
+                        : "Trusted retained session";
+        var trustPostureDetail = !hasStoredSession
+            ? IsLiveMode
+                ? "Atlas has a live service session, but it does not yet have a retained scan session to anchor trust across time."
+                : "Preview mode can help shape intent and structure, but it is not a retained trustworthy baseline for execution."
+            : !storedIsTrusted
+                ? $"Latest stored session {ShortId(persistedInventorySnapshot.SessionId)} is retained in a degraded state. Atlas should keep destructive work behind review until a trusted session replaces it."
+                : string.Equals(storedBuildMode, "IncrementalComposition", StringComparison.OrdinalIgnoreCase)
+                    ? $"Latest stored session {ShortId(persistedInventorySnapshot.SessionId)} is a trusted incremental composition using {storedDeltaSourceLabel.ToLowerInvariant()} with {storedBaselineLabel.ToLowerInvariant()}."
+                    : $"Latest stored session {ShortId(persistedInventorySnapshot.SessionId)} is a trusted full rescan captured through {storedTriggerLabel.ToLowerInvariant()}.";
+
+        var executionStanceValue = !hasStoredSession
+            ? !IsLiveMode
+                ? "Preview only"
+                : hasCurrentScan
+                    ? "Refresh before execute"
+                    : "Awaiting scan"
+            : !storedIsTrusted
+                ? "Review gate"
+                : currentPlan.Plan.Operations.Count == 0
+                    ? "Plan-ready"
+                    : CanExecutePlan
+                        ? "Execution-ready"
+                        : "Review-ready";
+        var executionStanceDetail = !hasStoredSession
+            ? !IsLiveMode
+                ? "Preview mode can draft and rehearse, but Atlas should not treat this inventory as execution-ready."
+                : hasCurrentScan
+                    ? "Run or retain a fresh service-backed scan before treating the current plan as execution-ready."
+                    : "Atlas needs a scan before it can stage trustworthy file operations."
+            : !storedIsTrusted
+                ? "The latest retained inventory is degraded, so Atlas should keep destructive steps in review until a trusted rescan lands."
+                : currentPlan.Plan.Operations.Count == 0
+                    ? "The current retained inventory is strong enough to support a new plan draft."
+                    : CanExecutePlan
+                        ? "Atlas has both a retained trusted inventory and an active plan, so the shell can move from review toward execution."
+                        : "Atlas has a plan, but the current shell posture still keeps execution behind review gates.";
+
+        var fallbackValue = !hasStoredSession
+            ? IsLiveMode ? "No retained fallback yet" : "Preview heuristic lane"
+            : string.Equals(storedBuildMode, "IncrementalComposition", StringComparison.OrdinalIgnoreCase)
+                ? "Incremental with baseline"
+                : "Full-rescan fallback";
+        var fallbackDetail = !hasStoredSession
+            ? IsLiveMode
+                ? "Atlas can scan live right now, but it still needs a retained session to make fallback behavior observable over time."
+                : "Preview mode keeps the UX warm without claiming a retained trustworthy baseline."
+            : string.Equals(storedBuildMode, "IncrementalComposition", StringComparison.OrdinalIgnoreCase)
+                ? $"Atlas built the latest retained inventory from a bounded delta path and linked it back to {storedBaselineLabel.ToLowerInvariant()}."
+                : $"Atlas reached the latest retained session through the conservative full-rescan path using {storedTriggerLabel.ToLowerInvariant()}.";
+
+        var noteValue = string.IsNullOrWhiteSpace(storedNote)
+            ? "No note retained"
+            : !storedIsTrusted
+                ? "Degradation note retained"
+                : "Composition note retained";
+        var noteDetail = string.IsNullOrWhiteSpace(storedNote)
+            ? "The latest retained session did not need an explicit degradation or composition note."
+            : storedNote;
+
+        ReplaceAll(ScanTrustSignals,
+        [
+            new AtlasSignalCard("TRUST POSTURE", trustPostureValue, trustPostureDetail),
+            new AtlasSignalCard("EXECUTION STANCE", executionStanceValue, executionStanceDetail),
+            new AtlasSignalCard("FALLBACK PATH", fallbackValue, fallbackDetail),
+            new AtlasSignalCard("SAFETY NOTE", noteValue, noteDetail)
+        ]);
+
+        ScanTrustSummaryText = !hasStoredSession
+            ? IsLiveMode
+                ? "Atlas is live, but it still needs a retained scan baseline before it can present a durable trust posture."
+                : "Atlas is operating in preview mode, so trust stays intentionally limited even though the UX can still rehearse plans."
+            : !storedIsTrusted
+                ? $"Atlas is carrying the latest retained inventory in a degraded posture: {noteValue.ToLowerInvariant()}. Destructive work should stay behind review until a trusted session replaces it."
+                : string.Equals(storedBuildMode, "IncrementalComposition", StringComparison.OrdinalIgnoreCase)
+                    ? $"Atlas is working from a trusted incremental retained session linked through {storedBaselineLabel.ToLowerInvariant()} and sourced from {storedDeltaSourceLabel.ToLowerInvariant()}."
+                    : $"Atlas is working from a trusted full-rescan retained session captured through {storedTriggerLabel.ToLowerInvariant()}.";
+    }
+
     private void RefreshHistoryMetrics()
     {
         ReplaceAll(HistoryMetrics,
@@ -2914,6 +3892,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             new AtlasMetricCard("STORED SCANS", $"{persistedInventorySessions.Sessions.Count:N0}", persistedInventorySnapshot.HasSession
                 ? "Recent persisted inventory sessions are available from the service read path."
                 : "No persisted inventory sessions are available yet."),
+            new AtlasMetricCard("STORED DUPS", $"{persistedSessionDuplicates.TotalCount:N0}", persistedSessionDuplicates.TotalCount > 0
+                ? "Retained duplicate review groups are available from the latest stored session."
+                : "No retained duplicate groups are available yet."),
             new AtlasMetricCard("STORED PLANS", $"{persistedHistory.RecentPlans.Count:N0}", "Recent persisted plans returned by the service history snapshot."),
             new AtlasMetricCard("STORED TRACES", $"{persistedHistory.RecentTraces.Count:N0}", "Recent planning or voice traces retained in service-backed memory."),
             new AtlasMetricCard("SERVICE MODE", IsLiveMode ? "Live" : "Preview", IsLiveMode
@@ -2951,6 +3932,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     private void RefreshPlanSignals()
     {
         var risk = currentPlan.Plan.RiskSummary;
+        var storedTrust = GetStoredScanTrustContext();
         var blockedCount = risk.BlockedReasons.Count;
         var approvalValue = blockedCount > 0
             ? "Blocked"
@@ -2996,13 +3978,60 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 : "Low";
 
         var sensitivityDetail = $"Sensitivity score {risk.SensitivityScore:P0}, sync risk {risk.SyncRisk:P0}, planner confidence {risk.Confidence:P0}.";
+        var inventoryTrustValue = !storedTrust.HasStoredSession
+            ? IsLiveMode ? "Retained scan needed" : "Preview only"
+            : !storedTrust.IsTrusted
+                ? "Degraded retained"
+                : string.Equals(storedTrust.BuildMode, "IncrementalComposition", StringComparison.OrdinalIgnoreCase)
+                    ? "Trusted incremental"
+                    : "Trusted retained";
+        var inventoryTrustDetail = !storedTrust.HasStoredSession
+            ? IsLiveMode
+                ? "Atlas has a live shell session, but it still needs a retained trusted scan before structural execution should be treated as grounded."
+                : "Preview mode can stage a plan, but it is not the same as holding a retained trusted inventory basis."
+            : !storedTrust.IsTrusted
+                ? $"Latest retained scan {ShortId(storedTrust.SessionId)} is degraded. {storedTrust.Note}"
+                : $"Latest retained scan {ShortId(storedTrust.SessionId)} is trusted and comes from {storedTrust.BuildModeLabel.ToLowerInvariant()} through {storedTrust.TriggerLabel.ToLowerInvariant()}.";
+        var evidenceValue = !storedTrust.HasStoredSession
+            ? "No retained lineage"
+            : $"{storedTrust.BuildModeLabel} / {storedTrust.DeltaSourceLabel}";
+        var evidenceDetail = !storedTrust.HasStoredSession
+            ? "Atlas needs a retained scan session before it can prove the lineage behind this plan beyond the current shell session."
+            : $"{storedTrust.BaselineLabel}. {(string.IsNullOrWhiteSpace(storedTrust.Note) ? "No composition note was retained." : storedTrust.Note)}";
+
+        var leadLiveDuplicate = GetLeadDuplicateGroup();
+        var leadPersistedDuplicate = GetLeadPersistedDuplicateGroup();
+        var hasLiveDuplicates = currentScan.Duplicates.Count > 0;
+        var riskyDuplicateGroups = hasLiveDuplicates ? CountRiskyDuplicateGroups() : CountRiskyPersistedDuplicateGroups();
+        var highConfidenceDuplicateGroups = hasLiveDuplicates ? CountHighConfidenceDuplicateGroups() : CountHighConfidencePersistedDuplicateGroups();
+        var duplicateGroupCount = hasLiveDuplicates ? currentScan.Duplicates.Count : persistedSessionDuplicates.TotalCount;
+        var leadDuplicatePath = hasLiveDuplicates ? leadLiveDuplicate?.CanonicalPath : leadPersistedDuplicate?.CanonicalPath;
+        var leadDuplicateReason = hasLiveDuplicates ? leadLiveDuplicate?.CanonicalReason : leadPersistedDuplicate?.CanonicalReason;
+        var leadDuplicateMatchConfidence = hasLiveDuplicates ? leadLiveDuplicate?.MatchConfidence : leadPersistedDuplicate?.MatchConfidence;
+        var duplicateEvidenceValue = duplicateGroupCount == 0
+            ? "No duplicate review"
+            : riskyDuplicateGroups > 0
+                ? hasLiveDuplicates ? "Live review-heavy" : "Retained review-heavy"
+                : highConfidenceDuplicateGroups > 0
+                    ? hasLiveDuplicates ? "Live actionable" : "Retained actionable"
+                    : hasLiveDuplicates ? "Live low-confidence" : "Retained low-confidence";
+        var duplicateEvidenceDetail = duplicateGroupCount == 0
+            ? "Atlas has not surfaced duplicate groups in the live or retained scan basis, so duplicate cleanup does not influence this plan."
+            : string.IsNullOrWhiteSpace(leadDuplicatePath) || string.IsNullOrWhiteSpace(leadDuplicateReason)
+                ? $"{duplicateGroupCount:N0} duplicate groups are available, but Atlas does not yet have a lead canonical narrative for review."
+                : riskyDuplicateGroups > 0
+                    ? $"{riskyDuplicateGroups:N0} duplicate groups carry sensitive, sync-managed, or protected membership. Lead canonical {ShortPath(leadDuplicatePath)} stays favored because {leadDuplicateReason}."
+                    : $"{highConfidenceDuplicateGroups:N0} duplicate groups currently meet the cleanup-confidence threshold. Lead canonical {ShortPath(leadDuplicatePath)} stays favored because {leadDuplicateReason} with match confidence {(leadDuplicateMatchConfidence ?? 0d):P1}.";
 
         ReplaceAll(PlanSignals,
         [
             new AtlasSignalCard("APPROVAL POSTURE", approvalValue, approvalDetail),
+            new AtlasSignalCard("INVENTORY TRUST", inventoryTrustValue, inventoryTrustDetail),
             new AtlasSignalCard("SERVICE READINESS", readinessValue, readinessDetail),
             new AtlasSignalCard("REVERSIBILITY", reversibilityValue, reversibilityDetail),
-            new AtlasSignalCard("SENSITIVITY", sensitivityValue, sensitivityDetail)
+            new AtlasSignalCard("SENSITIVITY", sensitivityValue, sensitivityDetail),
+            new AtlasSignalCard("EVIDENCE BASIS", evidenceValue, evidenceDetail),
+            new AtlasSignalCard("DUPLICATE EVIDENCE", duplicateEvidenceValue, duplicateEvidenceDetail)
         ]);
 
         ReplaceAll(PlanBlockedReasons, risk.BlockedReasons.Count == 0
@@ -3307,21 +4336,32 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         CommandNextStepDetailText = nextStepDetail;
     }
 
-    private string BuildNextStepDetail(string routeTag, bool requiresConfirmation)
+    private string BuildNextStepDetail(string routeTag, bool requiresConfirmation, string origin)
     {
         var modeDetail = IsLiveMode
             ? "The service is connected, but execution still remains gated by plan review."
             : "Atlas is still in preview mode, so the shell can explain and simulate while execution stays blocked.";
-
-        return routeTag switch
+        var storedTrust = GetStoredScanTrustContext();
+        var trustDetail = routeTag switch
         {
-            "optimization" => $"{modeDetail} Run the optimization scan to separate auto-fix candidates from recommendation-only findings.",
+            "undo" => string.Empty,
+            "settings" => string.Empty,
+            _ when !storedTrust.HasStoredSession && IsLiveMode => " Retain a fresh trusted scan before moving a structural plan toward execution.",
+            _ when storedTrust.HasStoredSession && !storedTrust.IsTrusted => $" Refresh a trusted scan before execution because retained scan {ShortId(storedTrust.SessionId)} is degraded.",
+            _ => string.Empty
+        };
+
+        var detail = routeTag switch
+        {
+            "optimization" => $"{modeDetail} Run the optimization scan to separate temp cleanup, cache cleanup, duplicate archive review, startup clutter, and recommendation-only findings.",
             "undo" => $"{modeDetail} Preview the checkpoint first, then decide whether the rollback or restore should be replayed.",
             "settings" => $"{modeDetail} Review the guardrails, then return to the workspace that best matches the request.",
             _ => requiresConfirmation
-                ? $"{modeDetail} Draft the plan, inspect the diff canvas, and expect extra review before any destructive step becomes eligible."
-                : $"{modeDetail} Draft the plan first, then inspect the proposed structure and rollback posture together."
+                ? $"{modeDetail}{trustDetail} Draft the plan, inspect the diff canvas, and expect extra review before any destructive step becomes eligible."
+                : $"{modeDetail}{trustDetail} Draft the plan first, then inspect the proposed structure and rollback posture together."
         };
+
+        return detail + BuildPrivacyPostureAddon(routeTag) + BuildVoiceSafetyAddon(origin, requiresConfirmation) + BuildDuplicatePressureAddon(routeTag);
     }
 
     private static string ResolveCommandRouteTag(string commandText, string fallbackTag)
@@ -3448,18 +4488,28 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 .Where(static group => group.Count() > 1)
                 .Select(group =>
                 {
-                    var canonical = group
-                        .OrderByDescending(static item => item.Sensitivity)
-                        .ThenBy(static item => item.Path.Length)
-                        .First();
+                    var members = group.ToList();
+                    var canonical = DuplicateCanonicalSelector.SelectCanonical(members);
+                    var analysis = DuplicateGroupAnalyzer.Analyze(members, isFullHashVerified: false, canonical);
 
                     return new DuplicateGroup
                     {
+                        GroupId = Guid.NewGuid().ToString("N"),
                         CanonicalPath = canonical.Path,
-                        Confidence = 0.99d,
-                        Paths = group.Select(static item => item.Path).ToList()
+                        Confidence = analysis.CleanupConfidence,
+                        MatchConfidence = analysis.MatchConfidence,
+                        CanonicalReason = analysis.CanonicalReason,
+                        HasSensitiveMembers = analysis.HasSensitiveMembers,
+                        HasSyncManagedMembers = analysis.HasSyncManagedMembers,
+                        HasProtectedMembers = analysis.HasProtectedMembers,
+                        MaxSensitivity = analysis.MaxSensitivity,
+                        Paths = members.Select(static item => item.Path).ToList()
                     };
                 })
+                .OrderByDescending(static group => group.HasProtectedMembers)
+                .ThenByDescending(static group => group.HasSensitiveMembers)
+                .ThenByDescending(static group => group.HasSyncManagedMembers)
+                .ThenByDescending(static group => group.Confidence)
                 .Take(8));
 
         response.FilesScanned = response.Inventory.Count;
@@ -3523,21 +4573,16 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             });
         }
 
-        foreach (var duplicate in currentScan.Duplicates.Where(group => group.Confidence >= profile.DuplicateAutoDeleteConfidenceThreshold).Take(4))
+        var duplicatePlan = safeDuplicateCleanupPlanner.BuildOperations(
+            currentScan.Duplicates,
+            currentScan.Inventory,
+            profile.DuplicateAutoDeleteConfidenceThreshold,
+            maxGroups: 4,
+            maxOperationsPerGroup: 2);
+
+        foreach (var operation in duplicatePlan.Operations)
         {
-            foreach (var duplicatePath in duplicate.Paths.Where(path => !string.Equals(path, duplicate.CanonicalPath, StringComparison.OrdinalIgnoreCase)).Take(2))
-            {
-                plan.Operations.Add(new PlanOperation
-                {
-                    Kind = OperationKind.DeleteToQuarantine,
-                    SourcePath = duplicatePath,
-                    Description = "Stage a duplicate candidate for quarantine after explicit review.",
-                    Confidence = duplicate.Confidence,
-                    MarksSafeDuplicate = true,
-                    Sensitivity = SensitivityLevel.Low,
-                    GroupId = duplicate.GroupId
-                });
-            }
+            plan.Operations.Add(operation);
         }
 
         var reviewCount = plan.Operations.Count(operation => operation.Kind == OperationKind.DeleteToQuarantine);
@@ -3549,13 +4594,21 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             SyncRisk = 0.08d,
             ReversibilityScore = 0.94d,
             Confidence = 0.81d,
-            ApprovalRequirement = reviewCount > 0 ? ApprovalRequirement.Review : ApprovalRequirement.None
+            ApprovalRequirement = reviewCount > 0 ? ApprovalRequirement.Review : ApprovalRequirement.None,
+            BlockedReasons = duplicatePlan.HasSkippedRiskyCandidates
+                ? new List<string>
+                {
+                    "Sensitive, sync-managed, or user-protected duplicate candidates were left out of preview quarantine staging."
+                }
+                : new List<string>()
         };
 
         return new PlanResponse
         {
             Plan = plan,
-            Summary = $"Prepared {plan.Operations.Count:N0} reversible operations around '{intent}'. Review gates are active for duplicate staging."
+            Summary = duplicatePlan.HasSkippedRiskyCandidates
+                ? $"Prepared {plan.Operations.Count:N0} reversible operations around '{intent}'. Higher-risk duplicate candidates were held out of automatic staging."
+                : $"Prepared {plan.Operations.Count:N0} reversible operations around '{intent}'. Review gates are active for duplicate staging."
         };
     }
 
@@ -3587,7 +4640,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 // Ignore inaccessible temp subdirectories in preview mode.
             }
 
-            if (tempBytes > 150L * 1024 * 1024)
+            if (tempBytes > PreviewTempFindingThresholdBytes)
             {
                 response.Findings.Add(new OptimizationFinding
                 {
@@ -3601,11 +4654,14 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             }
         }
 
+        response.Findings.AddRange(InspectPreviewCacheStorage(cancellationToken));
+        response.Findings.AddRange(InspectPreviewDuplicateArchives());
+
         foreach (var drive in DriveInfo.GetDrives().Where(static drive => drive.IsReady))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var usage = 1d - ((double)drive.AvailableFreeSpace / drive.TotalSize);
-            if (usage >= 0.85d)
+            if (usage >= 0.9d)
             {
                 response.Findings.Add(new OptimizationFinding
                 {
@@ -3619,25 +4675,110 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             }
         }
 
-        var startupPath = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-        if (Directory.Exists(startupPath))
+        if (OperatingSystem.IsWindows())
         {
-            var startupFiles = Directory.EnumerateFiles(startupPath).Take(10).ToList();
-            if (startupFiles.Count > 0)
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
+            if (key is not null)
             {
-                response.Findings.Add(new OptimizationFinding
+                foreach (var valueName in key.GetValueNames())
                 {
-                    Kind = OptimizationKind.UserStartupEntry,
-                    Target = startupPath,
-                    Evidence = $"{startupFiles.Count:N0} startup items were found in the user startup folder.",
-                    CanAutoFix = true,
-                    RequiresApproval = true,
-                    RollbackPlan = "Move shortcuts back into the startup folder if needed."
-                });
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var command = key.GetValue(valueName)?.ToString() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(command))
+                    {
+                        continue;
+                    }
+
+                    response.Findings.Add(new OptimizationFinding
+                    {
+                        Kind = OptimizationKind.UserStartupEntry,
+                        Target = valueName,
+                        Evidence = $"Startup entry: {command}",
+                        CanAutoFix = true,
+                        RequiresApproval = true,
+                        RollbackPlan = "Re-add the Run registry entry if disabled."
+                    });
+                }
             }
         }
 
         return response;
+    }
+
+    private IEnumerable<OptimizationFinding> InspectPreviewCacheStorage(CancellationToken cancellationToken)
+    {
+        foreach (var root in GetPreviewCacheRoots())
+        {
+            if (!Directory.Exists(root))
+            {
+                continue;
+            }
+
+            var totalBytes = MeasureDirectoryBytes(root, cancellationToken);
+            if (totalBytes <= PreviewCacheFindingThresholdBytes)
+            {
+                continue;
+            }
+
+            yield return new OptimizationFinding
+            {
+                Kind = OptimizationKind.CacheCleanup,
+                Target = root,
+                Evidence = $"Cache storage uses about {FormatBytes(totalBytes)}.",
+                CanAutoFix = true,
+                RequiresApproval = false,
+                RollbackPlan = "Cache will repopulate naturally; no manual rollback should be required."
+            };
+        }
+    }
+
+    private IEnumerable<OptimizationFinding> InspectPreviewDuplicateArchives()
+    {
+        if (currentScan.Inventory.Count == 0 || currentScan.Duplicates.Count == 0)
+        {
+            yield break;
+        }
+
+        var archiveInventoryByPath = currentScan.Inventory
+            .Where(item => item.SizeBytes > 0 && IsDuplicateArchivePath(item.Path))
+            .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in currentScan.Duplicates
+                     .Where(group => group.Paths.Count > 1 && group.Paths.Any(IsDuplicateArchivePath)))
+        {
+            var members = group.Paths
+                .Where(path => archiveInventoryByPath.ContainsKey(path))
+                .Select(path => archiveInventoryByPath[path])
+                .ToList();
+
+            if (members.Count < 2)
+            {
+                continue;
+            }
+
+            var canonical = members.FirstOrDefault(item => string.Equals(item.Path, group.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+                ?? members.OrderBy(item => item.Path.Length).ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase).First();
+
+            var reclaimableBytes = members
+                .Where(item => !string.Equals(item.Path, canonical.Path, StringComparison.OrdinalIgnoreCase))
+                .Sum(item => item.SizeBytes);
+
+            if (reclaimableBytes <= 0)
+            {
+                continue;
+            }
+
+            yield return new OptimizationFinding
+            {
+                Kind = OptimizationKind.DuplicateArchives,
+                Target = canonical.Path,
+                Evidence = $"Duplicate archive set contains {members.Count:N0} matching files; about {FormatBytes(reclaimableBytes)} could be reclaimed.",
+                CanAutoFix = true,
+                RequiresApproval = true,
+                RollbackPlan = "Move duplicate archives to quarantine before permanent deletion."
+            };
+        }
     }
 
     private ExecutionBatch BuildBatchFromCurrentPlan(bool isDryRun)
@@ -3770,6 +4911,118 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     private static string ClassifyCategory(string extension) =>
         CategoryByExtension.TryGetValue(extension, out var category) ? category : "Other";
 
+    private int CountHighConfidenceDuplicateGroups() =>
+        currentScan.Duplicates.Count(group => group.Confidence >= profile.DuplicateAutoDeleteConfidenceThreshold);
+
+    private int CountRiskyDuplicateGroups() =>
+        currentScan.Duplicates.Count(group =>
+            group.HasSensitiveMembers
+            || group.HasSyncManagedMembers
+            || group.HasProtectedMembers
+            || group.MaxSensitivity > SensitivityLevel.Low);
+
+    private DuplicateGroup? GetLeadDuplicateGroup() =>
+        currentScan.Duplicates
+            .OrderByDescending(static group => group.HasProtectedMembers)
+            .ThenByDescending(static group => group.HasSensitiveMembers)
+            .ThenByDescending(static group => group.HasSyncManagedMembers)
+            .ThenByDescending(static group => group.Confidence)
+            .ThenByDescending(static group => group.MatchConfidence)
+            .ThenByDescending(static group => group.Paths.Count)
+            .FirstOrDefault();
+
+    private int CountHighConfidencePersistedDuplicateGroups() =>
+        persistedSessionDuplicates.Groups.Count(group => group.CleanupConfidence >= profile.DuplicateAutoDeleteConfidenceThreshold);
+
+    private int CountRiskyPersistedDuplicateGroups() =>
+        persistedSessionDuplicates.Groups.Count(group =>
+            group.HasSensitiveMembers
+            || group.HasSyncManagedMembers
+            || group.HasProtectedMembers
+            || group.MaxSensitivity > SensitivityLevel.Low);
+
+    private DuplicateGroupSummary? GetLeadPersistedDuplicateGroup() =>
+        persistedSessionDuplicates.Groups
+            .OrderByDescending(static group => group.HasProtectedMembers)
+            .ThenByDescending(static group => group.HasSensitiveMembers)
+            .ThenByDescending(static group => group.HasSyncManagedMembers)
+            .ThenByDescending(static group => group.CleanupConfidence)
+            .ThenByDescending(static group => group.MatchConfidence)
+            .ThenByDescending(static group => group.MemberCount)
+            .FirstOrDefault();
+
+    private string? SelectRepresentativeLiveFilePath()
+    {
+        var leadDuplicatePath = GetLeadDuplicateGroup()?.CanonicalPath;
+        if (!string.IsNullOrWhiteSpace(leadDuplicatePath))
+        {
+            return leadDuplicatePath;
+        }
+
+        return currentScan.Inventory
+            .OrderByDescending(static item => item.Sensitivity)
+            .ThenByDescending(static item => item.IsDuplicateCandidate)
+            .ThenByDescending(static item => item.IsSyncManaged)
+            .ThenByDescending(static item => item.SizeBytes)
+            .Select(static item => item.Path)
+            .FirstOrDefault(static path => !string.IsNullOrWhiteSpace(path));
+    }
+
+    private string? SelectRepresentativeStoredFilePath()
+    {
+        var leadDuplicatePath = GetLeadPersistedDuplicateGroup()?.CanonicalPath;
+        if (!string.IsNullOrWhiteSpace(leadDuplicatePath))
+        {
+            return leadDuplicatePath;
+        }
+
+        return persistedInventoryFiles.Files
+            .OrderByDescending(static item => item.Sensitivity)
+            .ThenByDescending(static item => item.IsDuplicateCandidate)
+            .ThenByDescending(static item => item.IsSyncManaged)
+            .ThenByDescending(static item => item.SizeBytes)
+            .Select(static item => item.Path)
+            .FirstOrDefault(static path => !string.IsNullOrWhiteSpace(path));
+    }
+
+    private string BuildDuplicateInventoryMemoryDetail()
+    {
+        var leadDuplicate = GetLeadDuplicateGroup();
+        if (leadDuplicate is null)
+        {
+            return "Duplicate groups are available for quarantine-first review in the planning lane.";
+        }
+
+        var riskyGroups = CountRiskyDuplicateGroups();
+        var highConfidenceGroups = CountHighConfidenceDuplicateGroups();
+
+        return riskyGroups > 0
+            ? $"{riskyGroups:N0} groups remain review-heavy because they contain sensitive, sync-managed, or user-protected members. Lead canonical {ShortPath(leadDuplicate.CanonicalPath)} stays favored because {leadDuplicate.CanonicalReason}."
+            : $"{highConfidenceGroups:N0} groups meet the current cleanup-confidence threshold. Lead canonical {ShortPath(leadDuplicate.CanonicalPath)} stays favored because {leadDuplicate.CanonicalReason}, with match confidence {leadDuplicate.MatchConfidence:P1}.";
+    }
+
+    private string BuildStoredDuplicateInventoryMemoryDetail()
+    {
+        if (persistedSessionDuplicates.TotalCount == 0)
+        {
+            return "The latest retained scan has not surfaced duplicate groups yet.";
+        }
+
+        var leadDuplicate = GetLeadPersistedDuplicateGroup();
+        if (leadDuplicate is null)
+        {
+            return $"{persistedSessionDuplicates.TotalCount:N0} retained duplicate groups are available for later review.";
+        }
+
+        var riskyGroups = CountRiskyPersistedDuplicateGroups();
+        var highConfidenceGroups = CountHighConfidencePersistedDuplicateGroups();
+        var actionSummary = BuildDuplicateActionSummarySentence();
+
+        return riskyGroups > 0
+            ? $"{riskyGroups:N0} retained groups remain review-heavy because they contain sensitive, sync-managed, or protected members. Lead canonical {ShortPath(leadDuplicate.CanonicalPath)} stays favored because {leadDuplicate.CanonicalReason}.{(string.IsNullOrWhiteSpace(actionSummary) ? string.Empty : $" {actionSummary}")}"
+            : $"{highConfidenceGroups:N0} retained groups meet the current cleanup-confidence threshold. Lead canonical {ShortPath(leadDuplicate.CanonicalPath)} stays favored because {leadDuplicate.CanonicalReason}, with match confidence {leadDuplicate.MatchConfidence:P1}.{(string.IsNullOrWhiteSpace(actionSummary) ? string.Empty : $" {actionSummary}")}";
+    }
+
     private void SyncProfileCollections()
     {
         ReplaceAll(MutableRoots, profile.MutableRoots);
@@ -3785,8 +5038,107 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         "Review screenshots and move them into Pictures\\Screenshots without touching sync folders.",
         "Find safe duplicate PDFs in Documents and draft a quarantine-first cleanup plan.",
         "Inspect startup clutter and temporary file pressure before suggesting safe optimizations.",
+        "Inspect browser cache growth and duplicate installers in Downloads before suggesting safe cleanup.",
+        "Explain whether Atlas will redact sensitive paths before cloud planning.",
         "Show the latest rollback story and help me restore a quarantined file."
     ];
+
+    private static IEnumerable<string> GetPreviewCacheRoots()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            return Array.Empty<string>();
+        }
+
+        return
+        [
+            Path.Combine(localAppData, "Microsoft", "Windows", "INetCache"),
+            Path.Combine(localAppData, "Microsoft", "Windows", "Explorer"),
+            Path.Combine(localAppData, "Google", "Chrome", "User Data", "Default", "Cache"),
+            Path.Combine(localAppData, "Microsoft", "Edge", "User Data", "Default", "Cache")
+        ];
+    }
+
+    private static long MeasureDirectoryBytes(string root, CancellationToken cancellationToken)
+    {
+        long totalBytes = 0;
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                totalBytes += new FileInfo(file).Length;
+            }
+            catch
+            {
+                // Ignore transient or inaccessible files during preview-mode measurement.
+            }
+        }
+
+        return totalBytes;
+    }
+
+    private static bool IsDuplicateArchivePath(string path) =>
+        DuplicateArchiveExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    private string BuildPrivacyPostureAddon(string routeTag)
+    {
+        if (routeTag is "optimization" or "undo" or "settings")
+        {
+            return string.Empty;
+        }
+
+        return UploadSensitiveContent
+            ? " Sensitive content upload is enabled in policy, so review that posture if this request should stay fully redacted."
+            : " Sensitive paths and duplicate evidence stay redacted before cloud planning until you opt in from Policy Studio.";
+    }
+
+    private string BuildDuplicatePressureAddon(string routeTag)
+    {
+        if (routeTag is "undo" or "settings")
+        {
+            return string.Empty;
+        }
+
+        var hasLiveDuplicateEvidence = currentScan.Duplicates.Count > 0;
+        var duplicateGroupCount = hasLiveDuplicateEvidence
+            ? currentScan.Duplicates.Count
+            : persistedSessionDuplicates.TotalCount;
+
+        if (duplicateGroupCount == 0)
+        {
+            return string.Empty;
+        }
+
+        var riskyDuplicateGroups = hasLiveDuplicateEvidence
+            ? CountRiskyDuplicateGroups()
+            : CountRiskyPersistedDuplicateGroups();
+        var highConfidenceDuplicateGroups = hasLiveDuplicateEvidence
+            ? CountHighConfidenceDuplicateGroups()
+            : CountHighConfidencePersistedDuplicateGroups();
+        var sourceLabel = hasLiveDuplicateEvidence ? "current scan" : "latest retained scan";
+
+        return routeTag == "optimization"
+            ? riskyDuplicateGroups > 0
+                ? $" Duplicate review already shows {riskyDuplicateGroups:N0} risk-heavy groups in the {sourceLabel}, which can shape how Atlas treats archive and installer cleanup."
+                : $" Duplicate review already shows {highConfidenceDuplicateGroups:N0} cleanup-eligible groups in the {sourceLabel}, which can help Atlas explain archive cleanup pressure."
+            : riskyDuplicateGroups > 0
+                ? $" Duplicate review already shows {riskyDuplicateGroups:N0} review-heavy groups in the {sourceLabel}, so Atlas should keep cleanup posture conservative."
+                : $" Duplicate review already shows {highConfidenceDuplicateGroups:N0} cleanup-eligible groups in the {sourceLabel}, so Atlas can bring that evidence straight into plan review.";
+    }
+
+    private static string BuildVoiceSafetyAddon(string origin, bool requiresConfirmation)
+    {
+        if (!origin.Contains("Voice", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        return requiresConfirmation
+            ? " Voice requests with destructive, bulk, or protected-target language stay confirmation-first even when intent parsing succeeds."
+            : " Voice requests still flow through the same plan review and policy gates as typed input.";
+    }
 
     private void AddActivity(string title, string description)
     {

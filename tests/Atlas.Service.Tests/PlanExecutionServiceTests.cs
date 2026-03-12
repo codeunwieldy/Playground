@@ -2,6 +2,7 @@ using Atlas.Core.Contracts;
 using Atlas.Core.Planning;
 using Atlas.Core.Policies;
 using Atlas.Service.Services;
+using Atlas.Storage.Repositories;
 using Microsoft.Extensions.Options;
 
 namespace Atlas.Service.Tests;
@@ -25,7 +26,8 @@ public sealed class PlanExecutionServiceTests : IDisposable
         _service = new PlanExecutionService(
             new AtlasPolicyEngine(),
             new RollbackPlanner(),
-            options);
+            options,
+            new TrustedInventoryStub());
 
         _profile = new PolicyProfile
         {
@@ -738,4 +740,58 @@ public sealed class PlanExecutionServiceTests : IDisposable
     }
 
     #endregion
+}
+
+/// <summary>
+/// Stub inventory repository that returns a trusted session by default.
+/// Used by existing PlanExecutionService tests where trust gating should not interfere.
+/// </summary>
+internal sealed class TrustedInventoryStub : IInventoryRepository
+{
+    public Task<string> SaveSessionAsync(ScanSession session, CancellationToken ct = default) =>
+        Task.FromResult(session.SessionId);
+
+    public Task<ScanSessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default) =>
+        Task.FromResult<ScanSessionSummary?>(null);
+
+    public Task<ScanSessionSummary?> GetLatestSessionAsync(CancellationToken ct = default) =>
+        Task.FromResult<ScanSessionSummary?>(new ScanSessionSummary(
+            "trusted-stub", 100, 0, 1, 1, DateTime.UtcNow,
+            IsTrusted: true));
+
+    public Task<IReadOnlyList<ScanSessionSummary>> ListSessionsAsync(int limit = 20, int offset = 0, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ScanSessionSummary>>([]);
+
+    public Task<IReadOnlyList<string>> GetRootsForSessionAsync(string sessionId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
+
+    public Task<IReadOnlyList<VolumeSnapshot>> GetVolumesForSessionAsync(string sessionId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<VolumeSnapshot>>([]);
+
+    public Task<IReadOnlyList<FileInventoryItem>> GetFilesForSessionAsync(string sessionId, int limit = 1000, int offset = 0, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<FileInventoryItem>>([]);
+
+    public Task<int> GetFileCountForSessionAsync(string sessionId, CancellationToken ct = default) =>
+        Task.FromResult(0);
+
+    public Task<FileInventoryItem?> GetFileForSessionAsync(string sessionId, string filePath, CancellationToken ct = default) =>
+        Task.FromResult<FileInventoryItem?>(null);
+
+    public Task<SessionDiffSummary> DiffSessionsAsync(string olderSessionId, string newerSessionId, CancellationToken ct = default) =>
+        Task.FromResult(new SessionDiffSummary(olderSessionId, newerSessionId, 0, 0, 0, 0));
+
+    public Task<IReadOnlyList<SessionDiffFile>> GetDiffFilesAsync(string olderSessionId, string newerSessionId, int limit = 200, int offset = 0, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<SessionDiffFile>>([]);
+
+    public Task<IReadOnlyList<PersistedDuplicateGroup>> GetDuplicateGroupsForSessionAsync(string sessionId, int limit = 200, int offset = 0, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PersistedDuplicateGroup>>([]);
+
+    public Task<int> GetDuplicateGroupCountForSessionAsync(string sessionId, CancellationToken ct = default) =>
+        Task.FromResult(0);
+
+    public Task<PersistedDuplicateGroupDetail?> GetDuplicateGroupDetailAsync(string sessionId, string groupId, CancellationToken ct = default) =>
+        Task.FromResult<PersistedDuplicateGroupDetail?>(null);
+
+    public Task<IReadOnlyList<FileInventoryItem>> GetFilesForPathsAsync(string sessionId, IEnumerable<string> paths, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<FileInventoryItem>>([]);
 }

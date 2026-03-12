@@ -95,6 +95,57 @@ public sealed class InventoryRepository(SqliteConnectionFactory connectionFactor
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
+            // Duplicate groups (C-023)
+            foreach (var group in session.DuplicateGroups)
+            {
+                await using (var cmd = connection.CreateCommand())
+                {
+                    cmd.CommandText = """
+                        INSERT OR REPLACE INTO duplicate_groups (session_id, group_id, canonical_path, match_confidence, cleanup_confidence, canonical_reason, max_sensitivity, has_sensitive_members, has_sync_managed_members, has_protected_members)
+                        VALUES (@sid, @gid, @canon, @matchConf, @cleanConf, @reason, @maxSens, @hasSens, @hasSync, @hasProt)
+                        """;
+                    cmd.Parameters.AddWithValue("@sid", session.SessionId);
+                    cmd.Parameters.AddWithValue("@gid", group.GroupId);
+                    cmd.Parameters.AddWithValue("@canon", group.CanonicalPath);
+                    cmd.Parameters.AddWithValue("@matchConf", group.MatchConfidence);
+                    cmd.Parameters.AddWithValue("@cleanConf", group.Confidence);
+                    cmd.Parameters.AddWithValue("@reason", group.CanonicalReason);
+                    cmd.Parameters.AddWithValue("@maxSens", (int)group.MaxSensitivity);
+                    cmd.Parameters.AddWithValue("@hasSens", group.HasSensitiveMembers ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@hasSync", group.HasSyncManagedMembers ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@hasProt", group.HasProtectedMembers ? 1 : 0);
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+
+                foreach (var memberPath in group.Paths)
+                {
+                    await using var cmd = connection.CreateCommand();
+                    cmd.CommandText = """
+                        INSERT OR REPLACE INTO duplicate_group_members (session_id, group_id, member_path)
+                        VALUES (@sid, @gid, @path)
+                        """;
+                    cmd.Parameters.AddWithValue("@sid", session.SessionId);
+                    cmd.Parameters.AddWithValue("@gid", group.GroupId);
+                    cmd.Parameters.AddWithValue("@path", memberPath);
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+
+                // Evidence (C-025)
+                foreach (var evidence in group.Evidence)
+                {
+                    await using var cmd = connection.CreateCommand();
+                    cmd.CommandText = """
+                        INSERT OR REPLACE INTO duplicate_group_evidence (session_id, group_id, signal, detail)
+                        VALUES (@sid, @gid, @signal, @detail)
+                        """;
+                    cmd.Parameters.AddWithValue("@sid", session.SessionId);
+                    cmd.Parameters.AddWithValue("@gid", group.GroupId);
+                    cmd.Parameters.AddWithValue("@signal", evidence.Signal);
+                    cmd.Parameters.AddWithValue("@detail", evidence.Detail);
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+            }
+
             await transaction.CommitAsync(ct);
         }
         catch
@@ -428,6 +479,259 @@ public sealed class InventoryRepository(SqliteConnectionFactory connectionFactor
                 NewerSizeBytes: reader.IsDBNull(3) ? null : reader.GetInt64(3),
                 OlderLastModifiedUnix: reader.IsDBNull(4) ? null : reader.GetInt64(4),
                 NewerLastModifiedUnix: reader.IsDBNull(5) ? null : reader.GetInt64(5)));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<PersistedDuplicateGroup>> GetDuplicateGroupsForSessionAsync(string sessionId, int limit = 200, int offset = 0, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        // Read group headers
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT group_id, canonical_path, match_confidence, cleanup_confidence, canonical_reason, max_sensitivity, has_sensitive_members, has_sync_managed_members, has_protected_members
+            FROM duplicate_groups
+            WHERE session_id = @sid
+            ORDER BY cleanup_confidence DESC
+            LIMIT @limit OFFSET @offset
+            """;
+        cmd.Parameters.AddWithValue("@sid", sessionId);
+        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.Parameters.AddWithValue("@offset", offset);
+
+        var groups = new List<(string GroupId, string CanonicalPath, double MatchConfidence, double CleanupConfidence, string CanonicalReason, SensitivityLevel MaxSensitivity, bool HasSensitive, bool HasSync, bool HasProtected)>();
+        await using (var reader = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                groups.Add((
+                    GroupId: reader.GetString(0),
+                    CanonicalPath: reader.GetString(1),
+                    MatchConfidence: reader.GetDouble(2),
+                    CleanupConfidence: reader.GetDouble(3),
+                    CanonicalReason: reader.GetString(4),
+                    MaxSensitivity: (SensitivityLevel)reader.GetInt32(5),
+                    HasSensitive: reader.GetInt32(6) != 0,
+                    HasSync: reader.GetInt32(7) != 0,
+                    HasProtected: reader.GetInt32(8) != 0));
+            }
+        }
+
+        if (groups.Count == 0)
+            return [];
+
+        // Read member paths for each group
+        var results = new List<PersistedDuplicateGroup>(groups.Count);
+        foreach (var g in groups)
+        {
+            await using var memberCmd = connection.CreateCommand();
+            memberCmd.CommandText = """
+                SELECT member_path FROM duplicate_group_members
+                WHERE session_id = @sid AND group_id = @gid
+                ORDER BY member_path
+                """;
+            memberCmd.Parameters.AddWithValue("@sid", sessionId);
+            memberCmd.Parameters.AddWithValue("@gid", g.GroupId);
+
+            var members = new List<string>();
+            await using var memberReader = await memberCmd.ExecuteReaderAsync(ct);
+            while (await memberReader.ReadAsync(ct))
+            {
+                members.Add(memberReader.GetString(0));
+            }
+
+            results.Add(new PersistedDuplicateGroup(
+                GroupId: g.GroupId,
+                CanonicalPath: g.CanonicalPath,
+                MatchConfidence: g.MatchConfidence,
+                CleanupConfidence: g.CleanupConfidence,
+                CanonicalReason: g.CanonicalReason,
+                MaxSensitivity: g.MaxSensitivity,
+                HasSensitiveMembers: g.HasSensitive,
+                HasSyncManagedMembers: g.HasSync,
+                HasProtectedMembers: g.HasProtected,
+                MemberPaths: members));
+        }
+
+        return results;
+    }
+
+    public async Task<int> GetDuplicateGroupCountForSessionAsync(string sessionId, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM duplicate_groups WHERE session_id = @sid";
+        cmd.Parameters.AddWithValue("@sid", sessionId);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<FileInventoryItem?> GetFileForSessionAsync(string sessionId, string filePath, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT path, name, extension, category, size_bytes, last_modified_unix, sensitivity, is_sync_managed, is_duplicate_candidate
+            FROM file_snapshots
+            WHERE session_id = @sid AND path = @path
+            """;
+        cmd.Parameters.AddWithValue("@sid", sessionId);
+        cmd.Parameters.AddWithValue("@path", filePath);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            return new FileInventoryItem
+            {
+                Path = reader.GetString(0),
+                Name = reader.GetString(1),
+                Extension = reader.GetString(2),
+                Category = reader.GetString(3),
+                SizeBytes = reader.GetInt64(4),
+                LastModifiedUnixTimeSeconds = reader.GetInt64(5),
+                Sensitivity = (SensitivityLevel)reader.GetInt32(6),
+                IsSyncManaged = reader.GetInt32(7) != 0,
+                IsDuplicateCandidate = reader.GetInt32(8) != 0
+            };
+        }
+
+        return null;
+    }
+
+    // ── Duplicate group detail (C-025) ──────────────────────────────────────
+
+    public async Task<PersistedDuplicateGroupDetail?> GetDuplicateGroupDetailAsync(string sessionId, string groupId, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        // 1. Read group header
+        await using var headerCmd = connection.CreateCommand();
+        headerCmd.CommandText = """
+            SELECT canonical_path, match_confidence, cleanup_confidence, canonical_reason, max_sensitivity, has_sensitive_members, has_sync_managed_members, has_protected_members
+            FROM duplicate_groups
+            WHERE session_id = @sid AND group_id = @gid
+            """;
+        headerCmd.Parameters.AddWithValue("@sid", sessionId);
+        headerCmd.Parameters.AddWithValue("@gid", groupId);
+
+        string canonicalPath;
+        double matchConfidence, cleanupConfidence;
+        string canonicalReason;
+        SensitivityLevel maxSensitivity;
+        bool hasSensitive, hasSync, hasProtected;
+
+        await using (var reader = await headerCmd.ExecuteReaderAsync(ct))
+        {
+            if (!await reader.ReadAsync(ct))
+                return null;
+
+            canonicalPath = reader.GetString(0);
+            matchConfidence = reader.GetDouble(1);
+            cleanupConfidence = reader.GetDouble(2);
+            canonicalReason = reader.GetString(3);
+            maxSensitivity = (SensitivityLevel)reader.GetInt32(4);
+            hasSensitive = reader.GetInt32(5) != 0;
+            hasSync = reader.GetInt32(6) != 0;
+            hasProtected = reader.GetInt32(7) != 0;
+        }
+
+        // 2. Read member paths
+        await using var memberCmd = connection.CreateCommand();
+        memberCmd.CommandText = """
+            SELECT member_path FROM duplicate_group_members
+            WHERE session_id = @sid AND group_id = @gid
+            ORDER BY member_path
+            """;
+        memberCmd.Parameters.AddWithValue("@sid", sessionId);
+        memberCmd.Parameters.AddWithValue("@gid", groupId);
+
+        var members = new List<string>();
+        await using (var memberReader = await memberCmd.ExecuteReaderAsync(ct))
+        {
+            while (await memberReader.ReadAsync(ct))
+                members.Add(memberReader.GetString(0));
+        }
+
+        // 3. Read evidence
+        await using var evidenceCmd = connection.CreateCommand();
+        evidenceCmd.CommandText = """
+            SELECT signal, detail FROM duplicate_group_evidence
+            WHERE session_id = @sid AND group_id = @gid
+            ORDER BY signal
+            """;
+        evidenceCmd.Parameters.AddWithValue("@sid", sessionId);
+        evidenceCmd.Parameters.AddWithValue("@gid", groupId);
+
+        var evidence = new List<PersistedDuplicateEvidence>();
+        await using (var evidenceReader = await evidenceCmd.ExecuteReaderAsync(ct))
+        {
+            while (await evidenceReader.ReadAsync(ct))
+                evidence.Add(new PersistedDuplicateEvidence(evidenceReader.GetString(0), evidenceReader.GetString(1)));
+        }
+
+        return new PersistedDuplicateGroupDetail(
+            GroupId: groupId,
+            CanonicalPath: canonicalPath,
+            MatchConfidence: matchConfidence,
+            CleanupConfidence: cleanupConfidence,
+            CanonicalReason: canonicalReason,
+            MaxSensitivity: maxSensitivity,
+            HasSensitiveMembers: hasSensitive,
+            HasSyncManagedMembers: hasSync,
+            HasProtectedMembers: hasProtected,
+            MemberPaths: members,
+            Evidence: evidence);
+    }
+
+    // ── File lookup by paths (C-026) ────────────────────────────────────────
+
+    public async Task<IReadOnlyList<FileInventoryItem>> GetFilesForPathsAsync(
+        string sessionId, IEnumerable<string> paths, CancellationToken ct = default)
+    {
+        var pathList = paths?.ToList() ?? [];
+        if (pathList.Count == 0)
+            return [];
+
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        var results = new List<FileInventoryItem>(pathList.Count);
+        foreach (var path in pathList)
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                SELECT path, name, extension, category, size_bytes, last_modified_unix, sensitivity, is_sync_managed, is_duplicate_candidate
+                FROM file_snapshots
+                WHERE session_id = @sid AND path = @path
+                """;
+            cmd.Parameters.AddWithValue("@sid", sessionId);
+            cmd.Parameters.AddWithValue("@path", path);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                results.Add(new FileInventoryItem
+                {
+                    Path = reader.GetString(0),
+                    Name = reader.GetString(1),
+                    Extension = reader.GetString(2),
+                    Category = reader.GetString(3),
+                    SizeBytes = reader.GetInt64(4),
+                    LastModifiedUnixTimeSeconds = reader.GetInt64(5),
+                    Sensitivity = (SensitivityLevel)reader.GetInt32(6),
+                    IsSyncManaged = reader.GetInt32(7) != 0,
+                    IsDuplicateCandidate = reader.GetInt32(8) != 0
+                });
+            }
         }
 
         return results;

@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Text.Json;
 using Atlas.AI;
 using Atlas.Core.Contracts;
+using Atlas.Core.Planning;
 using Atlas.Core.Policies;
 using Atlas.Storage.Repositories;
 using Microsoft.Extensions.Options;
@@ -81,6 +82,13 @@ public sealed class AtlasPipeServerWorker(
             "inventory/drift-snapshot" => Wrap("inventory/drift-snapshot-response", await HandleDriftSnapshotAsync(cancellationToken)),
             "inventory/session-diff" => Wrap("inventory/session-diff-response", await HandleSessionDiffAsync(request, cancellationToken)),
             "inventory/session-diff-files" => Wrap("inventory/session-diff-files-response", await HandleSessionDiffFilesAsync(request, cancellationToken)),
+            "inventory/session-duplicates" => Wrap("inventory/session-duplicates-response", await HandleSessionDuplicatesAsync(request, cancellationToken)),
+            "inventory/duplicate-detail" => Wrap("inventory/duplicate-detail-response", await HandleDuplicateDetailAsync(request, cancellationToken)),
+            "inventory/duplicate-action-review" => Wrap("inventory/duplicate-action-review-response", await HandleDuplicateActionReviewAsync(request, cancellationToken)),
+            "inventory/duplicate-cleanup-preview" => Wrap("inventory/duplicate-cleanup-preview-response", await HandleDuplicateCleanupPreviewAsync(request, cancellationToken)),
+            "inventory/duplicate-cleanup-batch-preview" => Wrap("inventory/duplicate-cleanup-batch-preview-response", await HandleDuplicateCleanupBatchPreviewAsync(request, cancellationToken)),
+            "inventory/inspect-file" => Wrap("inventory/inspect-file-response", HandleInspectFile(request)),
+            "inventory/file-detail" => Wrap("inventory/file-detail-response", await HandleFileDetailAsync(request, cancellationToken)),
             _ => Wrap("error", new ProgressEvent { Stage = "error", Message = $"Unknown message type {request.MessageType}" })
         };
     }
@@ -99,6 +107,7 @@ public sealed class AtlasPipeServerWorker(
                 Roots = roots.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 Volumes = response.Volumes,
                 Files = response.Inventory,
+                DuplicateGroups = response.Duplicates,
                 DuplicateGroupCount = response.Duplicates.Count,
                 Trigger = "Manual",
                 BuildMode = "FullRescan",
@@ -134,6 +143,26 @@ public sealed class AtlasPipeServerWorker(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList()
         };
+
+        // Trust gate (C-019): elevate review when the latest inventory session is degraded.
+        try
+        {
+            var latestSession = await inventoryRepository.GetLatestSessionAsync(cancellationToken);
+            if (latestSession is not null && !latestSession.IsTrusted)
+            {
+                response.Plan.RequiresReview = true;
+                response.Plan.RiskSummary.BlockedReasons.Add(
+                    "Retained inventory session is degraded (IsTrusted=false). " +
+                    "Plan accuracy may be affected. " +
+                    "A full rescan is recommended before execution.");
+                if (response.Plan.RiskSummary.ApprovalRequirement < ApprovalRequirement.Review)
+                    response.Plan.RiskSummary.ApprovalRequirement = ApprovalRequirement.Review;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to check inventory trust state during plan generation.");
+        }
 
         try
         {
@@ -608,6 +637,395 @@ public sealed class AtlasPipeServerWorker(
                 OlderLastModifiedUnix = f.OlderLastModifiedUnix ?? 0,
                 NewerLastModifiedUnix = f.NewerLastModifiedUnix ?? 0
             }).ToList()
+        };
+    }
+
+    // ── Session duplicate review handler (C-023) ─────────────────────────────
+
+    private async Task<SessionDuplicateListResponse> HandleSessionDuplicatesAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var dupRequest = Serializer.Deserialize<SessionDuplicateListRequest>(payload);
+        var limit = Math.Clamp(dupRequest.Limit, 1, 500);
+
+        var session = await inventoryRepository.GetSessionAsync(dupRequest.SessionId, ct);
+        if (session is null)
+        {
+            return new SessionDuplicateListResponse { Found = false };
+        }
+
+        var totalCount = await inventoryRepository.GetDuplicateGroupCountForSessionAsync(dupRequest.SessionId, ct);
+        var groups = await inventoryRepository.GetDuplicateGroupsForSessionAsync(dupRequest.SessionId, limit, dupRequest.Offset, ct);
+
+        return new SessionDuplicateListResponse
+        {
+            Found = true,
+            TotalCount = totalCount,
+            Groups = groups.Select(static g => new DuplicateGroupSummary
+            {
+                GroupId = g.GroupId,
+                CanonicalPath = g.CanonicalPath,
+                MatchConfidence = g.MatchConfidence,
+                CleanupConfidence = g.CleanupConfidence,
+                CanonicalReason = g.CanonicalReason,
+                MaxSensitivity = g.MaxSensitivity,
+                HasSensitiveMembers = g.HasSensitiveMembers,
+                HasSyncManagedMembers = g.HasSyncManagedMembers,
+                HasProtectedMembers = g.HasProtectedMembers,
+                MemberPaths = g.MemberPaths.ToList(),
+                MemberCount = g.MemberPaths.Count
+            }).ToList()
+        };
+    }
+
+    // ── Duplicate group detail handler (C-025) ──────────────────────────────
+
+    private async Task<DuplicateGroupDetailResponse> HandleDuplicateDetailAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var detailRequest = Serializer.Deserialize<DuplicateGroupDetailRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(detailRequest.SessionId) || string.IsNullOrWhiteSpace(detailRequest.GroupId))
+        {
+            return new DuplicateGroupDetailResponse { Found = false };
+        }
+
+        var detail = await inventoryRepository.GetDuplicateGroupDetailAsync(detailRequest.SessionId, detailRequest.GroupId, ct);
+        if (detail is null)
+        {
+            return new DuplicateGroupDetailResponse { Found = false };
+        }
+
+        return new DuplicateGroupDetailResponse
+        {
+            Found = true,
+            GroupId = detail.GroupId,
+            CanonicalPath = detail.CanonicalPath,
+            MatchConfidence = detail.MatchConfidence,
+            CleanupConfidence = detail.CleanupConfidence,
+            CanonicalReason = detail.CanonicalReason,
+            MaxSensitivity = detail.MaxSensitivity,
+            HasSensitiveMembers = detail.HasSensitiveMembers,
+            HasSyncManagedMembers = detail.HasSyncManagedMembers,
+            HasProtectedMembers = detail.HasProtectedMembers,
+            MemberPaths = detail.MemberPaths.ToList(),
+            MemberCount = detail.MemberPaths.Count,
+            Evidence = detail.Evidence.Select(static e => new DuplicateEvidenceSummary
+            {
+                Signal = e.Signal,
+                Detail = e.Detail
+            }).ToList()
+        };
+    }
+
+    // ── Duplicate action eligibility review handler (C-026) ─────────────────
+
+    private async Task<DuplicateActionReviewResponse> HandleDuplicateActionReviewAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var reviewRequest = Serializer.Deserialize<DuplicateActionReviewRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(reviewRequest.SessionId) || string.IsNullOrWhiteSpace(reviewRequest.GroupId))
+        {
+            return new DuplicateActionReviewResponse { Found = false };
+        }
+
+        var detail = await inventoryRepository.GetDuplicateGroupDetailAsync(reviewRequest.SessionId, reviewRequest.GroupId, ct);
+        if (detail is null)
+        {
+            return new DuplicateActionReviewResponse { Found = false };
+        }
+
+        // Reconstruct a DuplicateGroup for the planner (CleanupConfidence maps to Confidence)
+        var group = new DuplicateGroup
+        {
+            GroupId = detail.GroupId,
+            CanonicalPath = detail.CanonicalPath,
+            Confidence = detail.CleanupConfidence,
+            MatchConfidence = detail.MatchConfidence,
+            CanonicalReason = detail.CanonicalReason,
+            MaxSensitivity = detail.MaxSensitivity,
+            HasSensitiveMembers = detail.HasSensitiveMembers,
+            HasSyncManagedMembers = detail.HasSyncManagedMembers,
+            HasProtectedMembers = detail.HasProtectedMembers,
+            Paths = detail.MemberPaths.ToList()
+        };
+
+        var inventoryItems = await inventoryRepository.GetFilesForPathsAsync(reviewRequest.SessionId, detail.MemberPaths, ct);
+
+        var threshold = profile.DuplicateAutoDeleteConfidenceThreshold;
+        var planner = new SafeDuplicateCleanupPlanner();
+        var planResult = planner.BuildOperations([group], inventoryItems, threshold);
+
+        // file_snapshots does not persist IsProtectedByUser, so supplement with
+        // the group-level HasProtectedMembers flag computed at scan time.
+        var evaluation = DuplicateActionEvaluator.Evaluate(
+            planResult, detail.HasProtectedMembers, detail.CleanupConfidence, threshold);
+
+        return new DuplicateActionReviewResponse
+        {
+            Found = true,
+            IsCleanupEligible = evaluation.IsCleanupEligible,
+            RequiresReview = evaluation.RequiresReview,
+            RecommendedPosture = evaluation.RecommendedPosture,
+            BlockedReasons = evaluation.BlockedReasons.ToList(),
+            ActionNotes = evaluation.ActionNotes.ToList(),
+            GroupId = detail.GroupId,
+            ConfidenceThresholdUsed = threshold
+        };
+    }
+
+    // ── Duplicate cleanup preview handler (C-027) ───────────────────────────
+
+    private const int MaxCleanupPreviewOperations = 50;
+
+    private async Task<DuplicateCleanupPreviewResponse> HandleDuplicateCleanupPreviewAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var previewRequest = Serializer.Deserialize<DuplicateCleanupPreviewRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(previewRequest.SessionId) || string.IsNullOrWhiteSpace(previewRequest.GroupId))
+        {
+            return new DuplicateCleanupPreviewResponse { Found = false };
+        }
+
+        var detail = await inventoryRepository.GetDuplicateGroupDetailAsync(previewRequest.SessionId, previewRequest.GroupId, ct);
+        if (detail is null)
+        {
+            return new DuplicateCleanupPreviewResponse { Found = false };
+        }
+
+        // Reconstruct a DuplicateGroup for the planner (CleanupConfidence maps to Confidence)
+        var group = new DuplicateGroup
+        {
+            GroupId = detail.GroupId,
+            CanonicalPath = detail.CanonicalPath,
+            Confidence = detail.CleanupConfidence,
+            MatchConfidence = detail.MatchConfidence,
+            CanonicalReason = detail.CanonicalReason,
+            MaxSensitivity = detail.MaxSensitivity,
+            HasSensitiveMembers = detail.HasSensitiveMembers,
+            HasSyncManagedMembers = detail.HasSyncManagedMembers,
+            HasProtectedMembers = detail.HasProtectedMembers,
+            Paths = detail.MemberPaths.ToList()
+        };
+
+        var inventoryItems = await inventoryRepository.GetFilesForPathsAsync(previewRequest.SessionId, detail.MemberPaths, ct);
+
+        var threshold = profile.DuplicateAutoDeleteConfidenceThreshold;
+        var planner = new SafeDuplicateCleanupPlanner();
+        var planResult = planner.BuildOperations([group], inventoryItems, threshold, maxGroups: 1, maxOperationsPerGroup: MaxCleanupPreviewOperations);
+
+        // file_snapshots does not persist IsProtectedByUser, so supplement with
+        // the group-level HasProtectedMembers flag computed at scan time.
+        var evaluation = DuplicateActionEvaluator.Evaluate(
+            planResult, detail.HasProtectedMembers, detail.CleanupConfidence, threshold);
+
+        if (!evaluation.IsCleanupEligible)
+        {
+            return new DuplicateCleanupPreviewResponse
+            {
+                Found = true,
+                IsPreviewAvailable = false,
+                RecommendedPosture = evaluation.RecommendedPosture,
+                CanonicalPath = detail.CanonicalPath,
+                BlockedReasons = evaluation.BlockedReasons.ToList(),
+                ActionNotes = evaluation.ActionNotes.ToList(),
+                GroupId = detail.GroupId,
+                ConfidenceThresholdUsed = threshold
+            };
+        }
+
+        var operations = planResult.Operations
+            .Take(MaxCleanupPreviewOperations)
+            .Select(op => new CleanupOperationPreview
+            {
+                SourcePath = op.SourcePath,
+                Kind = op.Kind.ToString(),
+                Description = op.Description,
+                Confidence = op.Confidence,
+                Sensitivity = op.Sensitivity.ToString()
+            })
+            .ToList();
+
+        return new DuplicateCleanupPreviewResponse
+        {
+            Found = true,
+            IsPreviewAvailable = true,
+            RecommendedPosture = evaluation.RecommendedPosture,
+            CanonicalPath = detail.CanonicalPath,
+            Operations = operations,
+            ActionNotes = evaluation.ActionNotes.ToList(),
+            GroupId = detail.GroupId,
+            ConfidenceThresholdUsed = threshold,
+            OperationCount = planResult.Operations.Count
+        };
+    }
+
+    // ── Duplicate cleanup batch preview handler (C-028) ─────────────────────
+
+    private const int MaxBatchPreviewGroups = 50;
+    private const int MaxBatchPreviewOpsPerGroup = 20;
+
+    private async Task<DuplicateCleanupBatchPreviewResponse> HandleDuplicateCleanupBatchPreviewAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var batchRequest = Serializer.Deserialize<DuplicateCleanupBatchPreviewRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(batchRequest.SessionId))
+        {
+            return new DuplicateCleanupBatchPreviewResponse { Found = false };
+        }
+
+        var session = await inventoryRepository.GetSessionAsync(batchRequest.SessionId, ct);
+        if (session is null)
+        {
+            return new DuplicateCleanupBatchPreviewResponse { Found = false };
+        }
+
+        var maxGroups = Math.Clamp(batchRequest.MaxGroups, 1, MaxBatchPreviewGroups);
+        var maxOpsPerGroup = Math.Clamp(batchRequest.MaxOperationsPerGroup, 1, MaxBatchPreviewOpsPerGroup);
+
+        var duplicateGroups = await inventoryRepository.GetDuplicateGroupsForSessionAsync(
+            batchRequest.SessionId, limit: maxGroups, ct: ct);
+
+        var threshold = profile.DuplicateAutoDeleteConfidenceThreshold;
+        var planner = new SafeDuplicateCleanupPlanner();
+
+        var groupSummaries = new List<BatchGroupPreviewSummary>(duplicateGroups.Count);
+        int totalOps = 0;
+        int previewable = 0;
+        int blocked = 0;
+
+        foreach (var persisted in duplicateGroups)
+        {
+            var group = new DuplicateGroup
+            {
+                GroupId = persisted.GroupId,
+                CanonicalPath = persisted.CanonicalPath,
+                Confidence = persisted.CleanupConfidence,
+                MatchConfidence = persisted.MatchConfidence,
+                CanonicalReason = persisted.CanonicalReason,
+                MaxSensitivity = persisted.MaxSensitivity,
+                HasSensitiveMembers = persisted.HasSensitiveMembers,
+                HasSyncManagedMembers = persisted.HasSyncManagedMembers,
+                HasProtectedMembers = persisted.HasProtectedMembers,
+                Paths = persisted.MemberPaths.ToList()
+            };
+
+            var inventoryItems = await inventoryRepository.GetFilesForPathsAsync(
+                batchRequest.SessionId, persisted.MemberPaths, ct);
+
+            var planResult = planner.BuildOperations(
+                [group], inventoryItems, threshold, maxGroups: 1, maxOperationsPerGroup: maxOpsPerGroup);
+
+            var evaluation = DuplicateActionEvaluator.Evaluate(
+                planResult, persisted.HasProtectedMembers, persisted.CleanupConfidence, threshold);
+
+            var summary = new BatchGroupPreviewSummary
+            {
+                GroupId = persisted.GroupId,
+                CanonicalPath = persisted.CanonicalPath,
+                IsPreviewable = evaluation.IsCleanupEligible,
+                RecommendedPosture = evaluation.RecommendedPosture,
+                OperationCount = planResult.Operations.Count,
+                BlockedReasons = evaluation.BlockedReasons.ToList(),
+                ActionNotes = evaluation.ActionNotes.ToList(),
+                CleanupConfidence = persisted.CleanupConfidence
+            };
+
+            groupSummaries.Add(summary);
+
+            if (evaluation.IsCleanupEligible)
+            {
+                previewable++;
+                totalOps += planResult.Operations.Count;
+            }
+            else
+            {
+                blocked++;
+            }
+        }
+
+        return new DuplicateCleanupBatchPreviewResponse
+        {
+            Found = true,
+            GroupsEvaluated = duplicateGroups.Count,
+            GroupsPreviewable = previewable,
+            GroupsBlocked = blocked,
+            TotalOperationCount = totalOps,
+            ConfidenceThresholdUsed = threshold,
+            Groups = groupSummaries
+        };
+    }
+
+    // ── File inspection and explainability handlers (C-024) ──────────────────
+
+    private FileInspectionResponse HandleInspectFile(PipeEnvelope request)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var inspectRequest = Serializer.Deserialize<FileInspectionRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(inspectRequest.FilePath))
+        {
+            return new FileInspectionResponse { Found = false, Outcome = "Missing" };
+        }
+
+        var result = fileScanner.InspectFileDetailed(profile, inspectRequest.FilePath);
+
+        if (result.Item is null)
+        {
+            return new FileInspectionResponse { Found = false, Outcome = result.Outcome };
+        }
+
+        var item = result.Item;
+        return new FileInspectionResponse
+        {
+            Found = true,
+            Outcome = result.Outcome,
+            Path = item.Path,
+            Name = item.Name,
+            Extension = item.Extension,
+            Category = item.Category,
+            MimeType = item.MimeType,
+            ContentSniffSucceeded = result.ContentSniffSucceeded,
+            HasContentFingerprint = result.HasContentFingerprint,
+            SizeBytes = item.SizeBytes,
+            LastModifiedUnixTimeSeconds = item.LastModifiedUnixTimeSeconds,
+            Sensitivity = item.Sensitivity,
+            SensitivityEvidence = result.Sensitivity?.Evidence.Select(static e => new SensitivityEvidenceSummary
+            {
+                Signal = e.Signal,
+                Detail = e.Detail
+            }).ToList() ?? [],
+            IsSyncManaged = item.IsSyncManaged,
+            IsDuplicateCandidate = item.IsDuplicateCandidate
+        };
+    }
+
+    private async Task<SessionFileDetailResponse> HandleFileDetailAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var detailRequest = Serializer.Deserialize<SessionFileDetailRequest>(payload);
+
+        var file = await inventoryRepository.GetFileForSessionAsync(detailRequest.SessionId, detailRequest.FilePath, ct);
+        if (file is null)
+        {
+            return new SessionFileDetailResponse { Found = false };
+        }
+
+        return new SessionFileDetailResponse
+        {
+            Found = true,
+            Path = file.Path,
+            Name = file.Name,
+            Extension = file.Extension,
+            Category = file.Category,
+            SizeBytes = file.SizeBytes,
+            LastModifiedUnixTimeSeconds = file.LastModifiedUnixTimeSeconds,
+            Sensitivity = file.Sensitivity,
+            IsSyncManaged = file.IsSyncManaged,
+            IsDuplicateCandidate = file.IsDuplicateCandidate
         };
     }
 

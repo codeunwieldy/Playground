@@ -14,7 +14,7 @@
                 <StackPanel Spacing="12">
                     <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="SAFE OPTIMIZATION" />
                     <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding OptimizationSummary}" TextWrapping="Wrap" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="Atlas auto-fixes only curated low-risk items. Everything else stays recommendation-first with evidence and rollback guidance." TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="Atlas auto-fixes only curated low-risk items like temp cleanup, cache cleanup, and bounded startup/archive pressure. Everything else stays recommendation-first with evidence and rollback guidance." TextWrapping="Wrap" />
                     <Button Click="OnAnalyzeOptimizationClick" Style="{StaticResource AtlasPrimaryButtonStyle}" Content="Analyze optimization" />
                 </StackPanel>
             </Border>

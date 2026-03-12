@@ -263,6 +263,97 @@ public class PlanningClientTests
         Assert.Contains("fallback", result.Summary, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task CreatePlanAsync_FallbackSkipsSensitiveDuplicateDeletes()
+    {
+        var request = BuildMinimalRequest();
+        request.Scan.Inventory.AddRange(
+        [
+            new FileInventoryItem
+            {
+                Path = @"C:\Users\Test\Documents\tax.pdf",
+                Name = "tax.pdf",
+                Extension = ".pdf",
+                Category = "Documents",
+                Sensitivity = SensitivityLevel.Low
+            },
+            new FileInventoryItem
+            {
+                Path = @"C:\Users\Test\Finance\tax-copy.pdf",
+                Name = "tax-copy.pdf",
+                Extension = ".pdf",
+                Category = "Documents",
+                Sensitivity = SensitivityLevel.High
+            }
+        ]);
+        request.Scan.Duplicates.Add(new DuplicateGroup
+        {
+            CanonicalPath = @"C:\Users\Test\Documents\tax.pdf",
+            Confidence = 0.995d,
+            Paths =
+            {
+                @"C:\Users\Test\Documents\tax.pdf",
+                @"C:\Users\Test\Finance\tax-copy.pdf"
+            }
+        });
+
+        var client = new OpenAIResponsesPlanningClient(
+            new HttpClient { BaseAddress = new Uri("https://api.openai.com") },
+            BuildOptions(apiKey: ""));
+
+        var result = await client.CreatePlanAsync(request, CancellationToken.None);
+
+        Assert.DoesNotContain(result.Plan.Operations, static operation => operation.Kind == OperationKind.DeleteToQuarantine);
+        Assert.Contains("excluded sensitive", result.Plan.Rationale, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreatePlanAsync_FallbackUsesActualDuplicateSensitivityAndGroupId()
+    {
+        var request = BuildMinimalRequest();
+        request.Scan.Inventory.AddRange(
+        [
+            new FileInventoryItem
+            {
+                Path = @"C:\Users\Test\Documents\notes.txt",
+                Name = "notes.txt",
+                Extension = ".txt",
+                Category = "Documents",
+                Sensitivity = SensitivityLevel.Low
+            },
+            new FileInventoryItem
+            {
+                Path = @"C:\Users\Test\Downloads\notes-copy.txt",
+                Name = "notes-copy.txt",
+                Extension = ".txt",
+                Category = "Documents",
+                Sensitivity = SensitivityLevel.Low
+            }
+        ]);
+        request.Scan.Duplicates.Add(new DuplicateGroup
+        {
+            GroupId = "dup-001",
+            CanonicalPath = @"C:\Users\Test\Documents\notes.txt",
+            Confidence = 0.995d,
+            Paths =
+            {
+                @"C:\Users\Test\Documents\notes.txt",
+                @"C:\Users\Test\Downloads\notes-copy.txt"
+            }
+        });
+
+        var client = new OpenAIResponsesPlanningClient(
+            new HttpClient { BaseAddress = new Uri("https://api.openai.com") },
+            BuildOptions(apiKey: ""));
+
+        var result = await client.CreatePlanAsync(request, CancellationToken.None);
+
+        var operation = Assert.Single(result.Plan.Operations.Where(static operation => operation.Kind == OperationKind.DeleteToQuarantine));
+        Assert.Equal(SensitivityLevel.Low, operation.Sensitivity);
+        Assert.Equal("dup-001", operation.GroupId);
+        Assert.True(operation.MarksSafeDuplicate);
+    }
+
     // ---- Voice intent parsing ----
 
     [Fact]
@@ -297,6 +388,43 @@ public class PlanningClientTests
 
         Assert.Equal("organize photos by year", result.ParsedIntent);
         Assert.False(result.NeedsConfirmation);
+    }
+
+    [Theory]
+    [InlineData("delete old finance docs", "delete old finance docs")]
+    [InlineData("move AppData to D drive", "move appdata to d drive")]
+    [InlineData("clean everything", "clean everything")]
+    public async Task ParseVoiceIntentAsync_RiskyVoiceIntent_ForcesConfirmation(string transcript, string parsedIntent)
+    {
+        var voiceResponse = new
+        {
+            parsed_intent = parsedIntent,
+            needs_confirmation = false
+        };
+
+        var responsePayload = new
+        {
+            output = new[]
+            {
+                new
+                {
+                    content = new[]
+                    {
+                        new { text = JsonSerializer.Serialize(voiceResponse, JsonOptions) }
+                    }
+                }
+            }
+        };
+
+        var httpClient = BuildFakeClient(HttpStatusCode.OK, responsePayload);
+        var client = new OpenAIResponsesPlanningClient(httpClient, BuildOptions(apiKey: "test-key"));
+
+        var result = await client.ParseVoiceIntentAsync(
+            new VoiceIntentRequest { Transcript = transcript },
+            CancellationToken.None);
+
+        Assert.Equal(parsedIntent, result.ParsedIntent);
+        Assert.True(result.NeedsConfirmation);
     }
 
     [Fact]
@@ -344,6 +472,82 @@ public class PlanningClientTests
 
         Assert.NotNull(handler.CapturedRequestBody);
         Assert.Contains("gpt-4o-custom", handler.CapturedRequestBody);
+    }
+
+    [Fact]
+    public async Task CreatePlanAsync_UsesProjectedInventoryPayload_WithMimeSignals()
+    {
+        var handler = new CapturingHttpHandler(HttpStatusCode.OK, new
+        {
+            output = new[]
+            {
+                new { content = new[] { new { text = "{}" } } }
+            }
+        });
+
+        var request = BuildMinimalRequest();
+        request.Scan.Inventory.Add(new FileInventoryItem
+        {
+            Path = @"C:\Users\Test\Finance\statement.pdf",
+            Name = "statement.pdf",
+            Extension = ".pdf",
+            Category = "Documents",
+            MimeType = "application/pdf",
+            ContentFingerprint = "fp-001",
+            Sensitivity = SensitivityLevel.High,
+            IsDuplicateCandidate = true
+        });
+
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://api.openai.com") };
+        var client = new OpenAIResponsesPlanningClient(
+            httpClient,
+            BuildOptions(apiKey: "test-key-123", model: "gpt-5"));
+
+        await client.CreatePlanAsync(request, CancellationToken.None);
+
+        Assert.NotNull(handler.CapturedRequestBody);
+        Assert.Contains("inventory_projection", handler.CapturedRequestBody);
+        Assert.Contains("duplicate_projection", handler.CapturedRequestBody);
+        Assert.Contains("volume_projection", handler.CapturedRequestBody);
+        Assert.Contains("application/pdf", handler.CapturedRequestBody);
+        Assert.Contains("has_content_fingerprint", handler.CapturedRequestBody);
+        Assert.DoesNotContain("\"content_fingerprint\"", handler.CapturedRequestBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreatePlanAsync_RedactsSensitivePaths_WhenUploadSensitiveContentIsFalse()
+    {
+        var handler = new CapturingHttpHandler(HttpStatusCode.OK, new
+        {
+            output = new[]
+            {
+                new { content = new[] { new { text = "{}" } } }
+            }
+        });
+
+        var request = BuildMinimalRequest();
+        request.PolicyProfile.UploadSensitiveContent = false;
+        request.Scan.Inventory.Add(new FileInventoryItem
+        {
+            Path = @"C:\Users\Test\Finance\statement.pdf",
+            Name = "statement.pdf",
+            Extension = ".pdf",
+            Category = "Documents",
+            MimeType = "application/pdf",
+            Sensitivity = SensitivityLevel.High,
+            IsDuplicateCandidate = true
+        });
+
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://api.openai.com") };
+        var client = new OpenAIResponsesPlanningClient(
+            httpClient,
+            BuildOptions(apiKey: "test-key-123", model: "gpt-5"));
+
+        await client.CreatePlanAsync(request, CancellationToken.None);
+
+        Assert.NotNull(handler.CapturedRequestBody);
+        Assert.Contains("sensitive-item-001", handler.CapturedRequestBody);
+        Assert.DoesNotContain(@"C:\\Users\\Test\\Finance\\statement.pdf", handler.CapturedRequestBody, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -159,6 +159,45 @@ public sealed class AtlasDatabaseBootstrapper(StorageOptions options)
         CREATE INDEX IF NOT EXISTS idx_file_snapshots_session ON file_snapshots (session_id);
         """,
 
+        // ── Duplicate group persistence (C-023) ─────────────────────────────
+        """
+        CREATE TABLE IF NOT EXISTS duplicate_groups (
+            session_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            canonical_path TEXT NOT NULL,
+            match_confidence REAL NOT NULL,
+            cleanup_confidence REAL NOT NULL,
+            canonical_reason TEXT NOT NULL DEFAULT '',
+            max_sensitivity INTEGER NOT NULL DEFAULT 0,
+            has_sensitive_members INTEGER NOT NULL DEFAULT 0,
+            has_sync_managed_members INTEGER NOT NULL DEFAULT 0,
+            has_protected_members INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (session_id, group_id)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS duplicate_group_members (
+            session_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            member_path TEXT NOT NULL,
+            PRIMARY KEY (session_id, group_id, member_path)
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_duplicate_groups_session ON duplicate_groups (session_id);
+        """,
+
+        // ── Duplicate group evidence persistence (C-025) ────────────────────
+        """
+        CREATE TABLE IF NOT EXISTS duplicate_group_evidence (
+            session_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            signal TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            PRIMARY KEY (session_id, group_id, signal)
+        );
+        """,
+
         // ── USN checkpoint persistence (C-014) ──────────────────────────────
         """
         CREATE TABLE IF NOT EXISTS usn_checkpoints (

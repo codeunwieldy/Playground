@@ -14,6 +14,538 @@ For each update, include:
 
 ## Current Updates
 
+### C-026 Duplicate Action Eligibility and Review APIs
+
+- Task ID: C-026
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Policies/PolicyProfileFactory.cs`
+  - `src/Atlas.Core/Planning/SafeDuplicateCleanupPlanner.cs`
+  - `src/Atlas.Core/Scanning/DuplicateCanonicalSelector.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/PlanExecutionService.cs`
+  - `.planning/claude/C-022-DUPLICATE-EVIDENCE-AND-CONFIDENCE.md`
+  - `.planning/claude/C-025-DUPLICATE-GROUP-DETAIL-AND-EVIDENCE-APIS.md`
+  - `.planning/claude/CLAUDE-OUTBOX.md`
+- Files modified:
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added `DuplicateActionPosture` enum (Keep, Review, QuarantineDuplicates)
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `DuplicateActionReviewRequest` (SessionId, GroupId) and `DuplicateActionReviewResponse` (Found, IsCleanupEligible, RequiresReview, RecommendedPosture, BlockedReasons, ActionNotes, GroupId, ConfidenceThresholdUsed)
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs` — added `GetFilesForPathsAsync` method
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs` — implemented `GetFilesForPathsAsync` (indexed point queries per path)
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `inventory/duplicate-action-review` route and `HandleDuplicateActionReviewAsync` handler
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs` — updated `TrustedInventoryStub` with new interface method
+- Files created:
+  - `src/Atlas.Core/Planning/DuplicateActionEvaluator.cs` — stateless posture derivation from `SafeDuplicateCleanupPlanner` output
+  - `tests/Atlas.Core.Tests/DuplicateActionEvaluatorTests.cs` — 9 unit tests for posture derivation
+  - `tests/Atlas.Storage.Tests/DuplicateActionEligibilityTests.cs` — 5 integration tests for `GetFilesForPathsAsync`
+- New route: `inventory/duplicate-action-review` → `inventory/duplicate-action-review-response`
+- Decision-support fields now available:
+  - `Found` — whether the retained group exists
+  - `IsCleanupEligible` — whether the group passes all policy gates
+  - `RequiresReview` — whether human review is needed before cleanup
+  - `RecommendedPosture` — `Keep`, `Review`, or `QuarantineDuplicates`
+  - `BlockedReasons` — bounded list of why cleanup is blocked (sensitive members, sync-managed, protected, low confidence, missing inventory)
+  - `ActionNotes` — bounded list explaining the recommendation
+  - `ConfidenceThresholdUsed` — the policy threshold applied
+- Design: Reuses `SafeDuplicateCleanupPlanner.BuildOperations` as the sole rules engine. `DuplicateActionEvaluator` is a pure static result interpreter, not a second cleanup brain. The group-level `HasProtectedMembers` flag compensates for `file_snapshots` not persisting `IsProtectedByUser`.
+- Tests: 14 new tests (9 core + 5 storage), all passing. Full suite: 560 tests, 0 failures.
+
+### C-025 Duplicate Group Detail and Evidence APIs
+
+- Task ID: C-025
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Scanning/DuplicateGroupAnalyzer.cs`
+  - `src/Atlas.Core/Scanning/DuplicateCanonicalSelector.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `tests/Atlas.Storage.Tests/DuplicatePersistenceTests.cs`
+  - `tests/Atlas.Storage.Tests/TestDatabaseFixture.cs`
+  - `.planning/claude/C-025-DUPLICATE-GROUP-DETAIL-AND-EVIDENCE-APIS.md`
+- Files modified:
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added `DuplicateEvidenceEntry` class (Signal, Detail) and `Evidence` list field (ProtoMember 11) on `DuplicateGroup`
+  - `src/Atlas.Service/Services/FileScanner.cs` — populated `Evidence` from `DuplicateGroupAnalyzer.Analyze()` result on yielded `DuplicateGroup`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added `duplicate_group_evidence` table (session_id, group_id, signal, detail; PK on session_id + group_id + signal)
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs` — added `GetDuplicateGroupDetailAsync(sessionId, groupId)` method, `PersistedDuplicateGroupDetail` record (all group fields + evidence + members), `PersistedDuplicateEvidence` record
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs` — persists evidence rows in `SaveSessionAsync` transaction; implements `GetDuplicateGroupDetailAsync` with 3-query read (header → members → evidence)
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `DuplicateGroupDetailRequest`, `DuplicateGroupDetailResponse`, `DuplicateEvidenceSummary` contracts
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `inventory/duplicate-detail` route and `HandleDuplicateDetailAsync` handler
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs` — added `GetDuplicateGroupDetailAsync` stub method to `TrustedInventoryStub`
+- Files created:
+  - `tests/Atlas.Storage.Tests/DuplicateDetailTests.cs` — 8 tests covering evidence round-trip, all group fields, member ordering, missing session/group, empty evidence, evidence bounded count, multiple groups isolation
+- New route:
+  - `inventory/duplicate-detail` → `inventory/duplicate-detail-response` — bounded read-only drill-in for one retained duplicate group
+- New contracts:
+  - `DuplicateGroupDetailRequest` (SessionId, GroupId)
+  - `DuplicateGroupDetailResponse` (Found, GroupId, CanonicalPath, MatchConfidence, CleanupConfidence, CanonicalReason, MaxSensitivity, HasSensitiveMembers, HasSyncManagedMembers, HasProtectedMembers, MemberPaths, MemberCount, Evidence)
+  - `DuplicateEvidenceSummary` (Signal, Detail)
+- Schema addition:
+  - `duplicate_group_evidence` table: normalized per-signal rows keyed on (session_id, group_id, signal); bounded to ≤7 rows per group from the analyzer's fixed rule set
+- Duplicate evidence now queryable:
+  - `FullHashMatch` / `QuickHashOnly` — hash verification level
+  - `FingerprintAgreement` — all members share identical content header fingerprint
+  - `SizeMatch` — all members same size
+  - `ProtectedMember` — group contains user-protected files
+  - `CriticalSensitivity` / `SensitiveMember` — group contains sensitive files
+  - `SyncManagedMember` — group contains sync-managed files
+- Tests: 8 tests in `DuplicateDetailTests.cs`, all passing:
+  - Evidence round-trip persistence
+  - All group fields returned correctly
+  - Member paths ordered by path
+  - Missing session returns null
+  - Missing group ID returns null
+  - Empty evidence list returns empty
+  - Evidence count bounded (≤ 10)
+  - Multiple groups — only requested group returned
+- Full test suite: **546 tests** (199 Core + 74 AI + 153 Storage + 120 Service), **0 failures**
+- No `src/Atlas.App/**` files were touched
+- Risks or questions: None. The evidence was already computed by `DuplicateGroupAnalyzer` but discarded; this packet persists it through the existing scan transaction and exposes it through a bounded read route.
+
+### C-024 File Inspection and Sensitivity Explainability APIs
+
+- Task ID: C-024
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Core/Scanning/SensitivityScorer.cs`
+  - `src/Atlas.Core/Scanning/ContentSniffer.cs`
+  - `src/Atlas.Core/Policies/PathSafetyClassifier.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Service/Services/OptimizationScanner.cs`
+  - `.planning/claude/C-020-CONTENT-SNIFFING-AND-MIME-DETECTION.md`
+  - `.planning/claude/C-021-SENSITIVITY-SCORING-AND-EVIDENCE.md`
+  - `.planning/claude/C-024-FILE-INSPECTION-AND-SENSITIVITY-EXPLAINABILITY-APIS.md`
+- Files modified:
+  - `tests/Atlas.Service.Tests/FileInspectionTests.cs` — fixed `ExcludedPaths` → `ExcludedRoots` property bug, added 4 payload-boundedness and contract-safety tests (total: 15 tests, all passing)
+- Files already in place (from prior scaffolding):
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — `FileInspectionRequest`, `FileInspectionResponse`, `SensitivityEvidenceSummary`, `SessionFileDetailRequest`, `SessionFileDetailResponse` contracts
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — `inventory/inspect-file` and `inventory/file-detail` routes + handler implementations
+  - `src/Atlas.Service/Services/FileScanner.cs` — `InspectFileDetailed` method with outcome discrimination
+- New routes:
+  - `inventory/inspect-file` → `inventory/inspect-file-response` — live on-demand file inspection (read-only)
+  - `inventory/file-detail` → `inventory/file-detail-response` — persisted session file lookup by session ID + path (read-only)
+- Explainability fields now available through `FileInspectionResponse`:
+  - `Found` (bool) — whether the file was found and inspectable
+  - `Outcome` (string) — one of: `Inspected`, `Missing`, `Protected`, `Excluded`, `AccessDenied`
+  - `Path`, `Name`, `Extension` — normalized file identity
+  - `Category`, `MimeType` — MIME/category truth (sniff-first, extension fallback)
+  - `ContentSniffSucceeded` (bool) — whether magic-byte detection worked
+  - `HasContentFingerprint` (bool) — whether a header fingerprint was produced
+  - `SizeBytes`, `LastModifiedUnixTimeSeconds` — file metadata
+  - `Sensitivity` (enum) — `Unknown`, `Low`, `Medium`, `High`, `Critical`
+  - `SensitivityEvidence` (list of `SensitivityEvidenceSummary`) — each with `Signal` and `Detail`
+  - `IsSyncManaged`, `IsDuplicateCandidate` — posture flags
+- Tests: 15 tests in `tests/Atlas.Service.Tests/FileInspectionTests.cs`, all passing:
+  - Inspectable file returns identity, MIME/category, sniff status
+  - Content sniff success and failure paths
+  - Sensitivity evidence with multiple rules (bounded count asserted)
+  - Critical, high, and low sensitivity levels
+  - Missing file → `Found = false`
+  - Protected path → `Protected` outcome
+  - Excluded path → `Excluded` outcome
+  - Empty path → `Missing` outcome
+  - Size/time population
+  - All string fields non-null on success
+  - Duplicate candidate posture flag
+- No `src/Atlas.App/**` files were touched
+- Risks or questions: None. The contracts, routes, and handlers were already scaffolded in prior packets; this session verified correctness, fixed a test bug, and completed the test coverage required by the packet.
+
+### C-023 Persisted Duplicate Review and Query APIs
+
+- Task ID: C-023
+- Status: **done**
+- Files read:
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs`
+  - `.planning/claude/C-022-DUPLICATE-EVIDENCE-AND-CONFIDENCE.md`
+- Files created:
+  - `tests/Atlas.Storage.Tests/DuplicatePersistenceTests.cs` — 14 tests covering round-trip, confidence, risk flags, member paths, pagination, ordering, session isolation, and empty-session behavior
+- Files modified:
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added `duplicate_groups` table (normalized header with all evidence fields), `duplicate_group_members` table (member paths per group), and session index
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs` — added `DuplicateGroups` property to `ScanSession`, added `GetDuplicateGroupsForSessionAsync` and `GetDuplicateGroupCountForSessionAsync` methods, added `PersistedDuplicateGroup` record
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs` — implemented duplicate group persistence in `SaveSessionAsync` transaction and two new read methods
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `SessionDuplicateListRequest`, `SessionDuplicateListResponse`, and `DuplicateGroupSummary` contracts
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `inventory/session-duplicates` route and handler; wired `DuplicateGroups` into `HandleScanAsync` session save
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs` — wired `DuplicateGroups` into `RunFullRescanAsync` session save
+
+#### Schema design
+
+Normalized two-table design:
+
+| Table | Columns | PK |
+|---|---|---|
+| `duplicate_groups` | session_id, group_id, canonical_path, match_confidence, cleanup_confidence, canonical_reason, max_sensitivity, has_sensitive_members, has_sync_managed_members, has_protected_members | (session_id, group_id) |
+| `duplicate_group_members` | session_id, group_id, member_path | (session_id, group_id, member_path) |
+
+Index: `idx_duplicate_groups_session` on `duplicate_groups(session_id)`.
+
+#### Duplicate fields now persisted and queryable
+
+| Field | Type | Description |
+|---|---|---|
+| `group_id` | TEXT | Unique group identifier |
+| `canonical_path` | TEXT | Path selected as canonical |
+| `match_confidence` | REAL | Hash-based match confidence (from C-022 analyzer) |
+| `cleanup_confidence` | REAL | Risk-adjusted cleanup confidence |
+| `canonical_reason` | TEXT | Human-readable rationale for canonical selection |
+| `max_sensitivity` | INTEGER | Highest sensitivity level in the group |
+| `has_sensitive_members` | INTEGER | Group contains sensitive files |
+| `has_sync_managed_members` | INTEGER | Group contains sync-managed files |
+| `has_protected_members` | INTEGER | Group contains user-protected files |
+| `member_path` (members table) | TEXT | Individual member paths |
+
+#### Read-side API
+
+- Route: `inventory/session-duplicates` → `inventory/session-duplicates-response`
+- Request: `SessionDuplicateListRequest` (SessionId, Limit, Offset)
+- Response: `SessionDuplicateListResponse` (Found, TotalCount, Groups)
+- DTO: `DuplicateGroupSummary` with all evidence fields + member paths + member count
+- Pagination bounded by `Math.Clamp(1, 500)`
+- Results ordered by cleanup confidence descending (highest-confidence groups first)
+- Missing session returns `Found=false`
+
+#### Persistence continuity
+
+- **Manual scans** (`HandleScanAsync`): duplicate groups from `ScanResponse.Duplicates` are now included in session save
+- **Orchestration full rescans** (`RunFullRescanAsync`): duplicate groups from rescan response are now included in session save
+- **Incremental composition** (`TryIncrementalCompositionAsync`): carries `DuplicateGroupCount` from baseline (no live groups — this is correct since groups are not re-computed during composition)
+
+#### Test results
+
+- 14 new tests in `DuplicatePersistenceTests`, all passing
+- 519 total tests across all projects (141 Storage + 105 Service + 199 Core + 74 AI), 0 failures
+- No UI files touched
+
+---
+
+### C-022 Duplicate Evidence and Confidence
+
+- Task ID: C-022
+- Status: **done**
+- Files read:
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Scanning/DuplicateCanonicalSelector.cs`
+  - `src/Atlas.Core/Scanning/ContentSniffer.cs`
+  - `src/Atlas.Core/Scanning/SensitivityScorer.cs`
+  - `src/Atlas.Core/Planning/SafeDuplicateCleanupPlanner.cs`
+  - `tests/Atlas.Core.Tests/DuplicateCanonicalSelectorTests.cs`
+  - `tests/Atlas.Core.Tests/SensitivityScorerTests.cs`
+  - `tests/Atlas.Service.Tests/FileScannerTests.cs`
+  - `.planning/claude/C-020-CONTENT-SNIFFING-AND-MIME-DETECTION.md`
+  - `.planning/claude/C-021-SENSITIVITY-SCORING-AND-EVIDENCE.md`
+- Files created:
+  - `src/Atlas.Core/Scanning/DuplicateGroupAnalyzer.cs` — reusable static analyzer with evidence-friendly result model; computes match confidence (hash-based), cleanup confidence (risk-adjusted), canonical rationale, and risk flags
+  - `tests/Atlas.Core.Tests/DuplicateGroupAnalyzerTests.cs` — 23 tests covering all confidence, evidence, and canonical-reason behavior
+- Files modified:
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added 6 additive fields to `DuplicateGroup`: `CanonicalReason`, `HasSensitiveMembers`, `HasSyncManagedMembers`, `HasProtectedMembers`, `MaxSensitivity`, `MatchConfidence`
+  - `src/Atlas.Service/Services/FileScanner.cs` — replaced hardcoded `Confidence = 0.995d` with `DuplicateGroupAnalyzer.Analyze()` integration; populates all new evidence fields on `DuplicateGroup`
+
+#### Confidence model
+
+| Evidence Level | MatchConfidence | Notes |
+|---|---|---|
+| Full SHA-256 hash match | 0.999 base | Boosted to 0.9995 when content fingerprints also agree |
+| Quick hash only (partial) | 0.85 base | For future use; current pipeline always verifies full hash |
+
+#### Cleanup confidence risk penalties
+
+| Risk Factor | Penalty | Effect |
+|---|---|---|
+| Protected member in group | -0.10 | Strongly conservative when user has explicitly protected a file |
+| Critical sensitivity member | -0.15 | Very conservative with credential/key material |
+| High/Medium sensitivity member | -0.08 | Conservative with sensitive documents |
+| Sync-managed member | -0.04 | Moderate caution with cloud-synced files |
+
+Penalties stack. CleanupConfidence is clamped to [0.0, MatchConfidence].
+
+#### Canonical reason explanation
+
+The analyzer explains why the canonical file was chosen using signals: user-protected, sync-managed, high sensitivity, has content fingerprint, preferred location, stable location, or fallback to highest composite safety score.
+
+#### Risk data now available on DuplicateGroup
+
+- `MatchConfidence` — pure hash-based match strength (unaffected by risk)
+- `Confidence` — risk-adjusted cleanup confidence (formerly hardcoded 0.995)
+- `CanonicalReason` — human-readable explanation of canonical selection
+- `HasSensitiveMembers`, `HasSyncManagedMembers`, `HasProtectedMembers` — boolean risk flags
+- `MaxSensitivity` — highest sensitivity level in the group
+
+#### Test results
+
+- 23 new tests in `DuplicateGroupAnalyzerTests`, all passing
+- 505 total tests across all projects, 0 failures
+- No UI files touched
+
+---
+
+### C-021 Sensitivity Scoring and Evidence
+
+- Task ID: C-021
+- Status: **done**
+- Files read:
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Scanning/ContentSniffer.cs`
+  - `src/Atlas.Core/Policies/PolicyProfileFactory.cs`
+  - `src/Atlas.Core/Policies/PathSafetyClassifier.cs`
+  - `tests/Atlas.Service.Tests/ContentSniffingTests.cs`
+  - `tests/Atlas.Service.Tests/FileScannerTests.cs`
+  - `tests/Atlas.Core.Tests/DuplicateCanonicalSelectorTests.cs`
+  - `.planning/claude/C-021-SENSITIVITY-SCORING-AND-EVIDENCE.md`
+- Files created:
+  - `src/Atlas.Core/Scanning/SensitivityScorer.cs` — reusable static scorer with evidence-friendly result model; combines path, filename, extension, category, and MIME signals
+  - `tests/Atlas.Core.Tests/SensitivityScorerTests.cs` — 45 tests covering all classification rules
+- Files modified:
+  - `src/Atlas.Service/Services/FileScanner.cs` — replaced inline `ClassifySensitivity` with `SensitivityScorer.Classify`; extracted `category` and `mimeType` into local variables in `ClassifyFile` so they flow into the scorer
+
+#### Sensitivity signals used
+
+| Priority | Signal | Level | Source |
+|----------|--------|-------|--------|
+| 1 | CriticalExtension | Critical | `.kdbx`, `.kdb`, `.pfx`, `.p12`, `.pem`, `.key`, `.jks`, `.keystore`, `.ppk` |
+| 2a | PolicyKeyword | High | `profile.ProtectedKeywords` (user-configurable; defaults: passport, tax, medical, contract, payroll, bank, identity, recovery, password) |
+| 2b | SensitivePathSegment | High | Built-in: finance, legal, medical, payroll, identity, personnel, insurance, accounting, confidential |
+| 2c | SensitiveFilenameTerm | High | Built-in: w-2, w2, 1099, ssn, paystub, pay-stub, pay_stub, bank-statement, bank_statement, tax-return, tax_return, nda, deed, mortgage |
+| 3a | DocumentCategory | Medium | Category in {Documents, Spreadsheets, Presentations} (from C-020 content sniffing or extension fallback) |
+| 3b | ArchiveCategory | Medium | Category == "Archives" |
+| 3c | DatabaseExtension | Medium | `.db`, `.sqlite`, `.sqlite3`, `.mdb`, `.accdb` |
+| 4 | (default) | Low | No evidence matched |
+
+All rules are evaluated and all matching evidence is collected. The maximum severity level wins.
+
+#### Evidence model
+
+```csharp
+public sealed record SensitivityEvidence(string Signal, string Detail);
+public sealed record SensitivityResult(SensitivityLevel Level, IReadOnlyList<SensitivityEvidence> Evidence);
+```
+
+`FileScanner` consumes only `result.Level` for `FileInventoryItem.Sensitivity`. The full `SensitivityResult` (with evidence) is available for future explainability or diagnostic endpoints without any contract changes.
+
+#### What is now content-aware vs still heuristic
+
+- **Content-aware**: The `category` parameter passed to the scorer comes from `ContentSniffer.Sniff()` when available (e.g., a `.dat` file containing PDF magic bytes gets category "Documents" → Medium, not Low). This means C-020's content truth directly strengthens sensitivity decisions.
+- **Still heuristic**: Path segments, filename terms, and extension matching are string-based heuristics. They are intentionally conservative (over-classify rather than under-classify). The evidence trail makes it clear why a file was promoted.
+
+#### What changed from the old `ClassifySensitivity`
+
+- Fixed priority bug: `.kdbx`/`.pfx` now correctly classified as Critical regardless of keyword matches
+- Added 7 more Critical extensions (`.kdb`, `.p12`, `.pem`, `.key`, `.jks`, `.keystore`, `.ppk`)
+- Added built-in path segment matching (9 terms) as a safety net beyond user-configured keywords
+- Added filename term matching (14 terms) for specific document patterns like W-2, 1099, SSN
+- Added Medium tier: documents, spreadsheets, presentations, archives, and database files are no longer Low
+- Added evidence collection for all signals
+- Content-sniffed category now influences sensitivity decisions
+
+#### Tests added (45 total, all passing)
+
+| Category | Count | Tests |
+|----------|-------|-------|
+| Critical extensions | 9 | Theory across all 9 extensions |
+| High from policy keywords | 3 | passport, tax, bank in path/filename |
+| High from path segments | 7 | Theory across finance, legal, medical, insurance, personnel, accounting, confidential |
+| High from filename terms | 9 | Theory across w-2, 1099, ssn, nda, mortgage, paystub, bank-statement, tax-return, deed |
+| Medium from category | 5 | Documents, Spreadsheets, Presentations, Archives, database extension |
+| Low default | 4 | image, audio, video, unknown |
+| Priority and evidence | 4 | Critical beats High, High beats Medium, evidence accumulates, empty keywords uses built-in rules |
+| Content-aware | 2 | Unknown ext with Document category → Medium, txt ext with Images category → Low |
+| Edge cases | 2 | Null category, empty path |
+
+Total test count: 176 Core tests passed, 101 Service tests passed, 0 failed.
+
+### C-020 Content Sniffing and MIME Detection
+
+- Task ID: C-020
+- Status: **done**
+- Files read:
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Policies/PolicyProfile.cs`
+  - `src/Atlas.Core/Policies/PathSafetyClassifier.cs`
+  - `.planning/claude/C-020-CONTENT-SNIFFING-AND-MIME-DETECTION.md`
+- Files created:
+  - `src/Atlas.Core/Scanning/ContentSniffer.cs` — static utility with bounded header-based content sniffing for 10 file families, ZIP sub-sniffing for Office Open XML, and SHA-256 header fingerprint (first 8KB)
+  - `tests/Atlas.Service.Tests/ContentSniffingTests.cs` — 16 tests covering all format detection, fallback, mismatch, fingerprint, and integration scenarios
+- Files modified:
+  - `src/Atlas.Service/Services/FileScanner.cs` — extracted shared `ClassifyFile` method used by both `InspectFile` and `EnumerateRoot`; wired `ContentSniffer.Sniff` with extension-based fallback
+
+#### Content sniffing behavior
+
+`ContentSniffer.Sniff(filePath)` reads at most 68 bytes from the file header to detect file type via magic bytes, then computes a SHA-256 fingerprint of the first 8KB. Returns `null` when the file cannot be opened, is empty, or doesn't match any known signature.
+
+**Signature table:**
+
+| Family | Magic bytes | MIME | Category |
+|--------|------------|------|----------|
+| PDF | `%PDF` (0x25504446) | `application/pdf` | Documents |
+| PNG | `\x89PNG\r\n\x1A\n` | `image/png` | Images |
+| JPEG | `\xFF\xD8\xFF` | `image/jpeg` | Images |
+| GIF | `GIF87a` or `GIF89a` | `image/gif` | Images |
+| WebP | `RIFF....WEBP` | `image/webp` | Images |
+| WAV | `RIFF....WAVE` | `audio/wav` | Audio |
+| ZIP | `PK\x03\x04` | `application/zip` | Archives |
+| ZIP (Office) | `PK\x03\x04` + `word/`/`xl/`/`ppt/` filename | Office MIME types | Documents/Spreadsheets/Presentations |
+| MP3 (ID3) | `ID3` | `audio/mpeg` | Audio |
+| MP3 (sync) | `\xFF\xFB`/`\xFF\xFA`/`\xFF\xF3`/`\xFF\xF2` | `audio/mpeg` | Audio |
+| MP4/MOV | bytes 4-7 = `ftyp` | `video/mp4` | Video |
+
+#### Mismatch policy
+
+Content signal always wins over extension when sniffing succeeds. A PNG header in a `.txt` file will be classified as `image/png` / Images. When sniffing returns null (unknown content), the extension-based fallback is used.
+
+#### FileScanner deduplication
+
+Previously, `InspectFile` and `EnumerateRoot` duplicated inline classification logic. Both now call a shared `ClassifyFile(PolicyProfile, FileInfo)` method that:
+1. Calls `ContentSniffer.Sniff(info.FullName)`
+2. If non-null: uses sniffed MIME, category, and header fingerprint
+3. If null: falls back to extension-based category + extension string as MIME + empty fingerprint
+
+#### Tests added (16 total, all passing)
+
+| Test | Validates |
+|---|---|
+| `Sniff_DetectsPdf` | PDF magic → `application/pdf` / Documents |
+| `Sniff_DetectsPng` | PNG magic → `image/png` / Images |
+| `Sniff_DetectsJpeg` | JPEG magic → `image/jpeg` / Images |
+| `Sniff_DetectsGif` | GIF89a magic → `image/gif` / Images |
+| `Sniff_DetectsWebP` | RIFF+WEBP magic → `image/webp` / Images |
+| `Sniff_DetectsZip` | PK magic with generic filename → `application/zip` / Archives |
+| `Sniff_DetectsMp3WithId3` | ID3 magic → `audio/mpeg` / Audio |
+| `Sniff_DetectsWav` | RIFF+WAVE magic → `audio/wav` / Audio |
+| `Sniff_DetectsMp4` | ftyp box → `video/mp4` / Video |
+| `Sniff_ReturnsNull_ForUnknownContent` | Unknown content → null |
+| `Scanner_FallsBackToExtension_WhenSniffFails` | `.txt` with plain text → extension fallback |
+| `Scanner_ContentWins_WhenExtensionMismatches` | PNG header in `.txt` → sniff wins |
+| `Sniff_ReturnsNull_ForEmptyFile` | Empty file → null |
+| `Sniff_PopulatesFingerprint_ForKnownFile` | SHA-256 hex fingerprint, 64 chars |
+| `Sniff_Fingerprint_BoundedToFirstEightKb` | Files differing after 8KB have identical fingerprints |
+| `InspectFile_UsesSniffer` | PDF via InspectFile → correct MIME and fingerprint |
+| `ScanAsync_UsesSniffer` | PNG via full scan → correct MIME and fingerprint |
+
+Total test count: 101 passed, 0 failed.
+
+### C-019 Trust-Aware Plan Gating
+
+- Task ID: C-019
+- Status: **done**
+- Files read:
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/PlanExecutionService.cs`
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs`
+  - `.planning/claude/C-018-UNTRUSTED-SESSION-STATES-AND-PARTIAL-DEGRADATION.md`
+- Files changed:
+  - `src/Atlas.Service/Services/PlanExecutionService.cs` — added `IInventoryRepository` constructor dependency; added trust gate at top of `ExecuteAsync` that blocks live execution when the latest inventory session has `IsTrusted=false`, while allowing preview/dry-run to proceed normally
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added inventory trust check in `HandlePlanAsync` after policy validation; when latest session is degraded, sets `RequiresReview=true`, adds a blocked reason explaining the degradation, and elevates `ApprovalRequirement` to `Review`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs` — added 5 C-019 tests covering all trust gating scenarios
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs` — updated constructor call to pass `TrustedInventoryStub`; added `TrustedInventoryStub` class so existing tests remain unaffected by the new dependency
+
+#### Planning-time behavior for degraded retained scans
+
+When `HandlePlanAsync` runs and the latest inventory session has `IsTrusted=false`:
+1. `response.Plan.RequiresReview` is set to `true`
+2. A blocked reason is appended to `RiskSummary.BlockedReasons`: "Retained inventory session is degraded (IsTrusted=false). Plan accuracy may be affected. A full rescan is recommended before execution."
+3. `RiskSummary.ApprovalRequirement` is elevated to at least `ApprovalRequirement.Review`
+4. If the trust check itself throws, the error is logged as a warning and plan generation continues (fail-open for read, conservative for the user)
+
+When the latest session is trusted or no session exists, behavior is completely unchanged.
+
+#### Execution-time behavior for degraded retained scans
+
+When `PlanExecutionService.ExecuteAsync` runs:
+- If `request.Execute == true` (live execution) and latest session has `IsTrusted=false`: returns `ExecutionResponse { Success = false }` with message explaining the block and recommending a full rescan
+- If `request.Execute == false` (preview/dry-run): proceeds normally regardless of trust state
+- If no session exists or session is trusted: proceeds normally (existing behavior preserved)
+
+#### Additive contract changes
+
+None. All gating flows through existing surfaces:
+- `PlanGraph.RequiresReview` (existing bool)
+- `RiskEnvelope.BlockedReasons` (existing list)
+- `RiskEnvelope.ApprovalRequirement` (existing enum)
+- `ExecutionResponse.Success` and `ExecutionResponse.Messages` (existing fields)
+
+The only structural change is adding `IInventoryRepository` as a constructor parameter to `PlanExecutionService`, which is resolved automatically via DI.
+
+#### Tests added (all pass)
+
+| Test | Validates |
+|---|---|
+| `Execution_LiveBlocked_WhenLatestSessionDegraded` | Live execution returns `Success=false` with explanation when `IsTrusted=false` |
+| `Execution_PreviewAvailable_WhenLatestSessionDegraded` | Dry-run succeeds normally even with degraded session |
+| `Execution_LiveProceeds_WhenLatestSessionTrusted` | Live execution succeeds when session is trusted |
+| `Execution_BlockedReason_IsStableAndTruthful` | Blocked message contains "full rescan" and "Preview/dry-run remains available" |
+| `Execution_LiveProceeds_WhenNoSessionExists` | Live execution succeeds when no inventory session exists |
+
+Total test count: 82 passed, 0 failed.
+
+### C-018 Untrusted Session States and Partial Degradation
+
+- Task ID: C-018
+- Status: **done**
+- Files read:
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs`
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs`
+  - `src/Atlas.Core/Scanning/DeltaResult.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Core/Policies/PathSafetyClassifier.cs`
+  - `.planning/claude/C-015-INCREMENTAL-SESSION-COMPOSITION.md`
+  - `.planning/claude/C-016-INCREMENTAL-PROVENANCE-QUERY-APIS.md`
+  - `.planning/claude/C-017-INCREMENTAL-COMPOSITION-ACTIVATION.md`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs`
+- Files changed:
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs` — added `MaxDegradedRatio` option (default 0.5) controlling the threshold above which a degraded composition is abandoned in favor of a full rescan
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs` — upgraded `TryIncrementalCompositionAsync` to distinguish three inspection outcomes (updated, removed, failed) and to emit `IsTrusted=false` degraded sessions, abandon composition when failure ratio exceeds threshold, and populate precise degradation notes
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs` — added 6 C-018 tests and a `CreateWorkerWithProfile` helper
+- Cases that now emit `IsTrusted=false`:
+  - Incremental composition where some delta paths could not be refreshed (file exists on disk but `InspectFile` returned null due to I/O error, protection, exclusion, or permissions) **and** the failure ratio is ≤ `MaxDegradedRatio`
+  - Baseline entries are retained for failed paths; `CompositionNote` includes `DEGRADED:` prefix with path count, cause, and follow-up guidance
+- Cases that still force full rescan (`IsTrusted=true`):
+  - `RequiresFullRescan=true` from delta source
+  - Delta path count exceeds `MaxIncrementalPaths`
+  - No baseline session found
+  - Baseline session has 0 files
+  - Delta reported changes but no specific paths
+  - Composition throws an exception (catch block)
+  - **New**: Failure ratio exceeds `MaxDegradedRatio` (too many paths failed → abandon degraded session, fall back to full rescan)
+- Tests added (6 new, all passing):
+  1. `Orchestration_TrustedIncrementalSession_WhenAllPathsResolved` — complete composition stays `IsTrusted=true`
+  2. `Orchestration_DegradedSession_WhenSomePathsCannotBeInspected` — partial failures produce `IsTrusted=false` with `DEGRADED` note
+  3. `Orchestration_DegradedNote_RoundTripsThrough_SessionDetailApi` — degraded provenance round-trips through snapshot/session/detail APIs
+  4. `Orchestration_ForcesFullRescan_WhenTooManyPathsFail` — high failure ratio forces full rescan instead of degraded persistence
+  5. `Orchestration_BaselineLinkageTruthful_InDegradedCase` — baseline ID and delta source remain correct in degraded sessions
+  6. `ServiceOptions_MaxDegradedRatio_HasReasonableDefault` — config default is 0.5
+- Full test suite: **77 tests, all passing** (Atlas.Service.Tests)
+- No UI files touched
+- No schema or pipe contract changes required (existing `IsTrusted` and `CompositionNote` fields carry the new semantics)
+
 ### C-017 Incremental Composition Activation
 
 - Task ID: C-017
@@ -1056,4 +1588,98 @@ This definition is path-stable: a file that moved from one location to another a
   - Inventory read-side pipe contracts for the app (analogous to C-008 history routes)
   - Session deletion and retention policies
   - Duplicate group persistence (currently only the count is stored, not the full group data)
+- No `src/Atlas.App/**` files were touched
+
+### C-027 Duplicate Cleanup Preview APIs
+
+- Task ID: C-027
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Planning/SafeDuplicateCleanupPlanner.cs`
+  - `src/Atlas.Core/Planning/DuplicateActionEvaluator.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs`
+  - `.planning/claude/C-025-DUPLICATE-GROUP-DETAIL-AND-EVIDENCE-APIS.md`
+  - `.planning/claude/C-026-DUPLICATE-ACTION-ELIGIBILITY-AND-REVIEW-APIS.md`
+  - `.planning/claude/C-027-DUPLICATE-CLEANUP-PREVIEW-APIS.md`
+  - `tests/Atlas.Storage.Tests/DuplicateDetailTests.cs`
+  - `tests/Atlas.Storage.Tests/DuplicateActionEligibilityTests.cs`
+  - `tests/Atlas.Core.Tests/SafeDuplicateCleanupPlannerTests.cs`
+  - `tests/Atlas.Core.Tests/DuplicateActionEvaluatorTests.cs`
+- Files modified:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `DuplicateCleanupPreviewRequest` (SessionId, GroupId), `DuplicateCleanupPreviewResponse` (Found, IsPreviewAvailable, RecommendedPosture, CanonicalPath, Operations, BlockedReasons, ActionNotes, GroupId, ConfidenceThresholdUsed, OperationCount), `CleanupOperationPreview` (SourcePath, Kind, Description, Confidence, Sensitivity)
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added route `inventory/duplicate-cleanup-preview` -> `inventory/duplicate-cleanup-preview-response` with `HandleDuplicateCleanupPreviewAsync` handler and `MaxCleanupPreviewOperations = 50` constant
+- New files:
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPreviewTests.cs` — 7 tests + `CleanupPreviewTestFixture`
+- New route: `inventory/duplicate-cleanup-preview`
+- New contracts:
+  - `DuplicateCleanupPreviewRequest` — SessionId, GroupId
+  - `DuplicateCleanupPreviewResponse` — Found, IsPreviewAvailable, RecommendedPosture, CanonicalPath, Operations (List\<CleanupOperationPreview\>), BlockedReasons, ActionNotes, GroupId, ConfidenceThresholdUsed, OperationCount
+  - `CleanupOperationPreview` — SourcePath, Kind, Description, Confidence, Sensitivity
+- Cleanup preview fields now available:
+  - `IsPreviewAvailable` — whether preview operations were produced
+  - `RecommendedPosture` — carried through from evaluator (Keep, Review, QuarantineDuplicates)
+  - `CanonicalPath` — the path Atlas would keep
+  - `Operations` — bounded list of quarantine previews (SourcePath, Kind, Description, Confidence, Sensitivity)
+  - `OperationCount` — total operation count (may exceed bounded list size)
+  - `BlockedReasons` — why preview is unavailable when blocked
+  - `ActionNotes` — supplementary notes when preview is available
+  - `ConfidenceThresholdUsed` — the policy threshold used for evaluation
+- Tests: 7 tests, all passing
+  - `CleanupPreview_EligibleGroup_ReturnsBoundedOperations` — eligible group produces quarantine operations
+  - `CleanupPreview_ReviewGroup_ReturnsNoPreview` — sensitive group returns no preview with blocked reasons
+  - `CleanupPreview_LowConfidence_ReturnsNoPreview` — low-confidence group returns Keep posture
+  - `CleanupPreview_MissingSession_ReturnsNotFound` — unknown session returns null
+  - `CleanupPreview_MissingGroup_ReturnsNotFound` — unknown group returns null
+  - `CleanupPreview_CanonicalPathTruthful` — canonical path excluded from operations
+  - `CleanupPreview_OperationsBounded` — large group capped at 50 operations
+- Full test suite: 567 tests, all passing, 0 regressions
+- No new repository methods or storage tables were needed
+- Reused `SafeDuplicateCleanupPlanner` and `DuplicateActionEvaluator` as-is
+- No `src/Atlas.App/**` files were touched
+
+### C-028 Duplicate Cleanup Batch Preview APIs
+
+- Task ID: C-028
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Planning/SafeDuplicateCleanupPlanner.cs`
+  - `src/Atlas.Core/Planning/DuplicateActionEvaluator.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `.planning/claude/C-028-DUPLICATE-CLEANUP-BATCH-PREVIEW-APIS.md`
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPreviewTests.cs`
+- Files modified:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `DuplicateCleanupBatchPreviewRequest` (SessionId, MaxGroups, MaxOperationsPerGroup), `DuplicateCleanupBatchPreviewResponse` (Found, GroupsEvaluated, GroupsPreviewable, GroupsBlocked, TotalOperationCount, ConfidenceThresholdUsed, Groups), `BatchGroupPreviewSummary` (GroupId, CanonicalPath, IsPreviewable, RecommendedPosture, OperationCount, BlockedReasons, ActionNotes, CleanupConfidence)
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added route `inventory/duplicate-cleanup-batch-preview` -> `inventory/duplicate-cleanup-batch-preview-response` with `HandleDuplicateCleanupBatchPreviewAsync` handler and `MaxBatchPreviewGroups = 50`, `MaxBatchPreviewOpsPerGroup = 20` constants
+- New files:
+  - `tests/Atlas.Service.Tests/DuplicateCleanupBatchPreviewTests.cs` — 7 tests + `BatchPreviewTestFixture`
+- New route: `inventory/duplicate-cleanup-batch-preview`
+- New contracts:
+  - `DuplicateCleanupBatchPreviewRequest` — SessionId, MaxGroups (default 50), MaxOperationsPerGroup (default 20)
+  - `DuplicateCleanupBatchPreviewResponse` — Found, GroupsEvaluated, GroupsPreviewable, GroupsBlocked, TotalOperationCount, ConfidenceThresholdUsed, Groups (List\<BatchGroupPreviewSummary\>)
+  - `BatchGroupPreviewSummary` — GroupId, CanonicalPath, IsPreviewable, RecommendedPosture, OperationCount, BlockedReasons, ActionNotes, CleanupConfidence
+- Batch preview fields now available:
+  - `GroupsEvaluated` — how many retained duplicate groups were examined
+  - `GroupsPreviewable` — how many are cleanup-eligible
+  - `GroupsBlocked` — how many are blocked by policy/sensitivity/confidence
+  - `TotalOperationCount` — total quarantine operations across all previewable groups
+  - `ConfidenceThresholdUsed` — the policy threshold used for evaluation
+  - `Groups` — bounded per-group summaries with posture, operation count, blocked reasons, and action notes
+- Tests: 7 tests, all passing
+  - `BatchPreview_MixedGroups_TruthfulCounts` — mixed eligible/blocked groups produce correct counts
+  - `BatchPreview_LimitEnforced_RestrictsGroupCount` — MaxGroups caps evaluation scope
+  - `BatchPreview_TotalOperationCount_IsTruthful` — total ops equals sum of previewable group ops
+  - `BatchPreview_BlockedGroups_ZeroOperations` — blocked groups carry blocked reasons
+  - `BatchPreview_MissingSession_ReturnsNotFound` — unknown session returns Found=false
+  - `BatchPreview_NoDuplicateGroups_ReturnsZeroCounts` — session with no duplicates returns zero counts
+  - `BatchPreview_ReportsConfidenceThreshold` — threshold is reported in response
+- Full test suite: 292 tests, all passing, 0 regressions
+- No new repository methods or storage tables were needed
+- Reused `SafeDuplicateCleanupPlanner` and `DuplicateActionEvaluator` per-group as-is
 - No `src/Atlas.App/**` files were touched

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Atlas.Core.Contracts;
 using Atlas.Core.Policies;
+using Atlas.Core.Scanning;
 
 namespace Atlas.Service.Services;
 
@@ -69,24 +70,65 @@ public sealed class FileScanner(PathSafetyClassifier pathSafetyClassifier)
             if (pathSafetyClassifier.IsExcludedPath(profile, filePath)) return null;
 
             var info = new FileInfo(filePath);
-            return new FileInventoryItem
-            {
-                Path = info.FullName,
-                Name = info.Name,
-                Extension = info.Extension,
-                Category = ClassifyCategory(info.Extension),
-                MimeType = info.Extension.Trim('.').ToLowerInvariant(),
-                SizeBytes = info.Length,
-                LastModifiedUnixTimeSeconds = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds(),
-                Sensitivity = ClassifySensitivity(profile, info.FullName),
-                IsSyncManaged = pathSafetyClassifier.IsSyncManaged(profile, info.FullName),
-                IsProtectedByUser = false,
-                IsDuplicateCandidate = info.Length > 0
-            };
+            return ClassifyFile(profile, info);
         }
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Inspects a single file with full explainability, distinguishing failure reasons.
+    /// </summary>
+    public DetailedInspectionResult InspectFileDetailed(PolicyProfile profile, string filePath)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+                return new DetailedInspectionResult { Outcome = "Missing" };
+
+            if (pathSafetyClassifier.IsProtectedPath(profile, filePath))
+                return new DetailedInspectionResult { Outcome = "Protected" };
+
+            if (pathSafetyClassifier.IsExcludedPath(profile, filePath))
+                return new DetailedInspectionResult { Outcome = "Excluded" };
+
+            var info = new FileInfo(filePath);
+            var sniff = ContentSniffer.Sniff(info.FullName);
+            var category = sniff?.Category ?? ClassifyCategory(info.Extension);
+            var mimeType = sniff?.MimeType ?? info.Extension.Trim('.').ToLowerInvariant();
+            var sensitivity = SensitivityScorer.Classify(
+                profile, info.FullName, info.Name, info.Extension, category, mimeType);
+
+            var item = new FileInventoryItem
+            {
+                Path = info.FullName,
+                Name = info.Name,
+                Extension = info.Extension,
+                Category = category,
+                MimeType = mimeType,
+                ContentFingerprint = sniff?.HeaderFingerprint ?? string.Empty,
+                SizeBytes = info.Length,
+                LastModifiedUnixTimeSeconds = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds(),
+                Sensitivity = sensitivity.Level,
+                IsSyncManaged = pathSafetyClassifier.IsSyncManaged(profile, info.FullName),
+                IsProtectedByUser = false,
+                IsDuplicateCandidate = info.Length > 0
+            };
+
+            return new DetailedInspectionResult
+            {
+                Outcome = "Inspected",
+                Item = item,
+                Sensitivity = sensitivity,
+                ContentSniffSucceeded = sniff is not null,
+                HasContentFingerprint = !string.IsNullOrEmpty(sniff?.HeaderFingerprint)
+            };
+        }
+        catch
+        {
+            return new DetailedInspectionResult { Outcome = "AccessDenied" };
         }
     }
 
@@ -143,21 +185,7 @@ public sealed class FileScanner(PathSafetyClassifier pathSafetyClassifier)
             try
             {
                 var info = new FileInfo(file);
-                var item = new FileInventoryItem
-                {
-                    Path = info.FullName,
-                    Name = info.Name,
-                    Extension = info.Extension,
-                    Category = ClassifyCategory(info.Extension),
-                    MimeType = info.Extension.Trim('.').ToLowerInvariant(),
-                    SizeBytes = info.Length,
-                    LastModifiedUnixTimeSeconds = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds(),
-                    Sensitivity = ClassifySensitivity(profile, info.FullName),
-                    IsSyncManaged = pathSafetyClassifier.IsSyncManaged(profile, info.FullName),
-                    IsProtectedByUser = false,
-                    IsDuplicateCandidate = info.Length > 0
-                };
-
+                var item = ClassifyFile(profile, info);
                 response.Inventory.Add(item);
             }
             catch
@@ -167,28 +195,33 @@ public sealed class FileScanner(PathSafetyClassifier pathSafetyClassifier)
         }
     }
 
+    private FileInventoryItem ClassifyFile(PolicyProfile profile, FileInfo info)
+    {
+        var sniff = ContentSniffer.Sniff(info.FullName);
+        var category = sniff?.Category ?? ClassifyCategory(info.Extension);
+        var mimeType = sniff?.MimeType ?? info.Extension.Trim('.').ToLowerInvariant();
+        var sensitivity = SensitivityScorer.Classify(
+            profile, info.FullName, info.Name, info.Extension, category, mimeType);
+
+        return new FileInventoryItem
+        {
+            Path = info.FullName,
+            Name = info.Name,
+            Extension = info.Extension,
+            Category = category,
+            MimeType = mimeType,
+            ContentFingerprint = sniff?.HeaderFingerprint ?? string.Empty,
+            SizeBytes = info.Length,
+            LastModifiedUnixTimeSeconds = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds(),
+            Sensitivity = sensitivity.Level,
+            IsSyncManaged = pathSafetyClassifier.IsSyncManaged(profile, info.FullName),
+            IsProtectedByUser = false,
+            IsDuplicateCandidate = info.Length > 0
+        };
+    }
+
     private static string ClassifyCategory(string extension) =>
         CategoryByExtension.TryGetValue(extension, out var category) ? category : "Other";
-
-    private static SensitivityLevel ClassifySensitivity(PolicyProfile profile, string path)
-    {
-        if (profile.ProtectedKeywords.Any(keyword => path.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
-        {
-            return SensitivityLevel.High;
-        }
-
-        if (path.EndsWith(".kdbx", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".pfx", StringComparison.OrdinalIgnoreCase))
-        {
-            return SensitivityLevel.Critical;
-        }
-
-        if (path.Contains("finance", StringComparison.OrdinalIgnoreCase) || path.Contains("legal", StringComparison.OrdinalIgnoreCase))
-        {
-            return SensitivityLevel.High;
-        }
-
-        return SensitivityLevel.Low;
-    }
 
     private static IEnumerable<DuplicateGroup> FindDuplicates(IEnumerable<FileInventoryItem> inventory)
     {
@@ -210,16 +243,22 @@ public sealed class FileScanner(PathSafetyClassifier pathSafetyClassifier)
 
                 foreach (var fullHashGroup in fullHashGroups)
                 {
-                    var canonical = fullHashGroup
-                        .OrderByDescending(static item => item.Sensitivity)
-                        .ThenBy(static item => item.Path.Length)
-                        .First();
+                    var duplicateCandidates = fullHashGroup.ToList();
+                    var canonical = DuplicateCanonicalSelector.SelectCanonical(duplicateCandidates);
+                    var analysis = DuplicateGroupAnalyzer.Analyze(duplicateCandidates, isFullHashVerified: true, canonical);
 
                     yield return new DuplicateGroup
                     {
                         CanonicalPath = canonical.Path,
-                        Confidence = 0.995d,
-                        Paths = fullHashGroup.Select(static item => item.Path).ToList()
+                        Confidence = analysis.CleanupConfidence,
+                        MatchConfidence = analysis.MatchConfidence,
+                        CanonicalReason = analysis.CanonicalReason,
+                        HasSensitiveMembers = analysis.HasSensitiveMembers,
+                        HasSyncManagedMembers = analysis.HasSyncManagedMembers,
+                        HasProtectedMembers = analysis.HasProtectedMembers,
+                        MaxSensitivity = analysis.MaxSensitivity,
+                        Paths = duplicateCandidates.Select(static item => item.Path).ToList(),
+                        Evidence = analysis.Evidence.Select(static e => new DuplicateEvidenceEntry { Signal = e.Signal, Detail = e.Detail }).ToList()
                     };
                 }
             }
@@ -255,4 +294,16 @@ public sealed class FileScanner(PathSafetyClassifier pathSafetyClassifier)
             return string.Empty;
         }
     }
+}
+
+/// <summary>
+/// Detailed inspection result with explainability and failure distinction.
+/// </summary>
+public sealed class DetailedInspectionResult
+{
+    public required string Outcome { get; init; }
+    public FileInventoryItem? Item { get; init; }
+    public SensitivityResult? Sensitivity { get; init; }
+    public bool ContentSniffSucceeded { get; init; }
+    public bool HasContentFingerprint { get; init; }
 }

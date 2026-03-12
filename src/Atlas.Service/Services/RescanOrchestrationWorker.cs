@@ -193,8 +193,14 @@ public sealed class RescanOrchestrationWorker(
             composed[file.Path] = file;
 
         // 4. Apply delta: re-inspect each changed path.
+        //    Track three categories:
+        //    - updated: path was re-inspected successfully
+        //    - removed: path no longer exists on disk (legitimate deletion)
+        //    - failedPaths: path still exists on disk but InspectFile returned null
+        //      (I/O error, transient lock, permissions) — this degrades trust
         var updatedCount = 0;
         var removedCount = 0;
+        var failedPaths = new List<string>();
         foreach (var changedPath in deltaResult.ChangedPaths)
         {
             var inspected = fileScanner.InspectFile(profile, changedPath);
@@ -203,17 +209,64 @@ public sealed class RescanOrchestrationWorker(
                 composed[inspected.Path] = inspected;
                 updatedCount++;
             }
+            else if (File.Exists(changedPath))
+            {
+                // The file exists on disk but could not be inspected.
+                // This is a degraded state — the delta told us it changed but we
+                // cannot determine its current state. Keep the baseline entry (if any)
+                // but record the failure.
+                failedPaths.Add(changedPath);
+            }
             else
             {
+                // File genuinely deleted — not a degradation.
                 if (composed.Remove(changedPath))
                     removedCount++;
             }
         }
 
-        // 5. Fresh volume snapshots.
+        // 5. Decide trust posture based on failed inspections.
+        var opts = options.Value;
+        var totalDelta = deltaResult.ChangedPaths.Count;
+        var failedRatio = totalDelta > 0 ? (double)failedPaths.Count / totalDelta : 0.0;
+
+        if (failedPaths.Count > 0 && failedRatio > opts.MaxDegradedRatio)
+        {
+            // Too many paths failed — unsafe to persist a degraded session.
+            logger.LogWarning(
+                "Incremental composition for root {Root}: {Failed}/{Total} paths failed inspection " +
+                "(ratio {Ratio:P0} exceeds threshold {Max:P0}). Falling back to full rescan.",
+                root, failedPaths.Count, totalDelta, failedRatio, opts.MaxDegradedRatio);
+            await RunFullRescanAsync(root, deltaResult,
+                $"Degraded composition abandoned: {failedPaths.Count}/{totalDelta} delta paths " +
+                $"failed inspection (ratio {failedRatio:P0} exceeds threshold {opts.MaxDegradedRatio:P0}). " +
+                $"Full rescan required for safety.", ct);
+            return false;
+        }
+
+        var isTrusted = failedPaths.Count == 0;
+
+        // 6. Fresh volume snapshots.
         var volumes = FileScanner.SnapshotVolumes();
 
-        // 6. Persist composed session.
+        // 7. Build composition note with degradation detail if applicable.
+        var noteBuilder = $"Composed from baseline {baseline.SessionId}: " +
+            $"{totalDelta} delta paths, " +
+            $"{updatedCount} updated, {removedCount} removed.";
+
+        if (failedPaths.Count > 0)
+        {
+            noteBuilder += $" DEGRADED: {failedPaths.Count} path(s) could not be refreshed " +
+                $"(files exist on disk but inspection failed). " +
+                $"Baseline entries retained for failed paths. " +
+                $"A follow-up full rescan will restore full trust.";
+        }
+        else
+        {
+            noteBuilder += " DuplicateGroupCount carried from baseline.";
+        }
+
+        // 8. Persist composed session.
         var session = new ScanSession
         {
             Roots = [root],
@@ -224,18 +277,16 @@ public sealed class RescanOrchestrationWorker(
             BuildMode = "IncrementalComposition",
             DeltaSource = deltaResult.Capability.ToString(),
             BaselineSessionId = baseline.SessionId,
-            IsTrusted = true,
-            CompositionNote = $"Composed from baseline {baseline.SessionId}: " +
-                $"{deltaResult.ChangedPaths.Count} delta paths, " +
-                $"{updatedCount} updated, {removedCount} removed. " +
-                $"DuplicateGroupCount carried from baseline."
+            IsTrusted = isTrusted,
+            CompositionNote = noteBuilder
         };
 
         var sessionId = await inventoryRepository.SaveSessionAsync(session, ct);
         logger.LogInformation(
             "Incremental composition for root {Root} persisted as session {SessionId}. " +
-            "Baseline={Baseline}, DeltaPaths={Delta}, Composed={Total}.",
-            root, sessionId, baseline.SessionId, deltaResult.ChangedPaths.Count, composed.Count);
+            "Baseline={Baseline}, DeltaPaths={Delta}, Composed={Total}, Trusted={Trusted}, FailedInspections={Failed}.",
+            root, sessionId, baseline.SessionId, deltaResult.ChangedPaths.Count, composed.Count,
+            isTrusted, failedPaths.Count);
         return true;
     }
 
@@ -273,6 +324,7 @@ public sealed class RescanOrchestrationWorker(
                 Roots = [root],
                 Volumes = response.Volumes,
                 Files = response.Inventory,
+                DuplicateGroups = response.Duplicates,
                 DuplicateGroupCount = response.Duplicates.Count,
                 Trigger = "Orchestration",
                 BuildMode = "FullRescan",

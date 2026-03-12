@@ -43,6 +43,13 @@ public enum OptimizationKind
     LowDiskPressure = 7
 }
 
+public enum DuplicateActionPosture
+{
+    Keep = 0,
+    Review = 1,
+    QuarantineDuplicates = 2
+}
+
 [ProtoContract]
 public sealed class PolicyProfile
 {
@@ -94,6 +101,20 @@ public sealed class DuplicateGroup
     [ProtoMember(2)] public List<string> Paths { get; set; } = new();
     [ProtoMember(3)] public string CanonicalPath { get; set; } = string.Empty;
     [ProtoMember(4)] public double Confidence { get; set; }
+    [ProtoMember(5)] public string CanonicalReason { get; set; } = string.Empty;
+    [ProtoMember(6)] public bool HasSensitiveMembers { get; set; }
+    [ProtoMember(7)] public bool HasSyncManagedMembers { get; set; }
+    [ProtoMember(8)] public bool HasProtectedMembers { get; set; }
+    [ProtoMember(9)] public SensitivityLevel MaxSensitivity { get; set; }
+    [ProtoMember(10)] public double MatchConfidence { get; set; }
+    [ProtoMember(11)] public List<DuplicateEvidenceEntry> Evidence { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class DuplicateEvidenceEntry
+{
+    [ProtoMember(1)] public string Signal { get; set; } = string.Empty;
+    [ProtoMember(2)] public string Detail { get; set; } = string.Empty;
 }
 
 [ProtoContract]

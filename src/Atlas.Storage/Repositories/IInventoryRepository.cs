@@ -56,6 +56,32 @@ public interface IInventoryRepository
     /// Returns bounded changed file rows between two sessions, ordered by path.
     /// </summary>
     Task<IReadOnlyList<SessionDiffFile>> GetDiffFilesAsync(string olderSessionId, string newerSessionId, int limit = 200, int offset = 0, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves duplicate groups for a given scan session with pagination.
+    /// </summary>
+    Task<IReadOnlyList<PersistedDuplicateGroup>> GetDuplicateGroupsForSessionAsync(string sessionId, int limit = 200, int offset = 0, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the total duplicate group count for a given scan session.
+    /// </summary>
+    Task<int> GetDuplicateGroupCountForSessionAsync(string sessionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves a single file snapshot by session ID and path.
+    /// </summary>
+    Task<FileInventoryItem?> GetFileForSessionAsync(string sessionId, string filePath, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves detailed information for a single duplicate group including evidence.
+    /// </summary>
+    Task<PersistedDuplicateGroupDetail?> GetDuplicateGroupDetailAsync(string sessionId, string groupId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves file inventory items for a given scan session filtered to specific paths.
+    /// Returns only items that exist in the session; missing paths are silently omitted.
+    /// </summary>
+    Task<IReadOnlyList<FileInventoryItem>> GetFilesForPathsAsync(string sessionId, IEnumerable<string> paths, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -67,6 +93,7 @@ public sealed class ScanSession
     public List<string> Roots { get; set; } = new();
     public List<VolumeSnapshot> Volumes { get; set; } = new();
     public List<FileInventoryItem> Files { get; set; } = new();
+    public List<DuplicateGroup> DuplicateGroups { get; set; } = new();
     public int DuplicateGroupCount { get; set; }
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
 
@@ -129,3 +156,39 @@ public sealed record SessionDiffFile(
     long? NewerSizeBytes,
     long? OlderLastModifiedUnix,
     long? NewerLastModifiedUnix);
+
+/// <summary>
+/// A persisted duplicate group with evidence fields and member paths.
+/// </summary>
+public sealed record PersistedDuplicateGroup(
+    string GroupId,
+    string CanonicalPath,
+    double MatchConfidence,
+    double CleanupConfidence,
+    string CanonicalReason,
+    SensitivityLevel MaxSensitivity,
+    bool HasSensitiveMembers,
+    bool HasSyncManagedMembers,
+    bool HasProtectedMembers,
+    IReadOnlyList<string> MemberPaths);
+
+/// <summary>
+/// A persisted duplicate group with full evidence detail for drill-in.
+/// </summary>
+public sealed record PersistedDuplicateGroupDetail(
+    string GroupId,
+    string CanonicalPath,
+    double MatchConfidence,
+    double CleanupConfidence,
+    string CanonicalReason,
+    SensitivityLevel MaxSensitivity,
+    bool HasSensitiveMembers,
+    bool HasSyncManagedMembers,
+    bool HasProtectedMembers,
+    IReadOnlyList<string> MemberPaths,
+    IReadOnlyList<PersistedDuplicateEvidence> Evidence);
+
+/// <summary>
+/// A single evidence signal from duplicate group analysis.
+/// </summary>
+public sealed record PersistedDuplicateEvidence(string Signal, string Detail);

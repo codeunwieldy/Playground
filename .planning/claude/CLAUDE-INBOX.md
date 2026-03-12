@@ -215,3 +215,177 @@ Use this file as the active assignment queue for Claude Code.
   - no `src/Atlas.App/**`
   - no UI ownership
   - keep the current inventory read surface stable unless a narrowly additive backend change is unavoidable
+
+### C-018 Untrusted Session States and Partial Degradation Packet
+- Status: **complete** (degraded retained sessions, trust semantics, and tests landed)
+- Output: `.planning/claude/C-018-UNTRUSTED-SESSION-STATES-AND-PARTIAL-DEGRADATION.md`
+- Focus:
+  - introduce honest `IsTrusted=false` behavior for degraded retained sessions
+  - define when Atlas persists a degraded session versus forcing a full rescan
+  - populate precise degradation notes without changing the app contract surface
+- Codex target:
+  - feed the existing scan-trust and provenance UX in the dashboard, plans workspace, and `Atlas Memory`
+  - keep the current shell architecture stable
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+  - preserve conservative fallback behavior over optimistic partial state
+
+### C-019 Trust-Aware Plan Gating Packet
+- Status: **complete** (trust-aware planning/execution gating and tests landed)
+- Output: `.planning/claude/C-019-TRUST-AWARE-PLAN-GATING.md`
+- Focus:
+  - make service-side planning and execution react to degraded retained scan trust
+  - elevate review or block execution when Atlas lacks a trusted retained inventory basis
+  - prefer existing risk and execution response surfaces over broad contract churn
+- Codex target:
+  - feed the current plan review, command deck, and trust UX with truthful service-side gating
+  - keep the shell architecture stable
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+  - preserve preview availability while keeping risky execution conservative
+
+### C-020 Content Sniffing and MIME Detection Packet
+- Status: **complete** (bounded content sniffing, MIME/category truth, and tests landed)
+- Output: `.planning/claude/C-020-CONTENT-SNIFFING-AND-MIME-DETECTION.md`
+- Focus:
+  - bounded content-based file understanding for common file families
+  - truthful MIME/category population beyond extension-only typing
+  - bounded `ContentFingerprint` population and reuse in full scan + single-file inspection
+  - service-side tests for sniffing and fallback behavior
+- Codex target:
+  - keep Codex free to deepen duplicate intelligence and shell behavior without overlapping the scanner internals
+  - provide richer file-understanding truth that later sensitivity and duplicate packets can consume
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+  - do not redesign duplicate canonical ranking in this packet unless a tiny scanner-side seam is unavoidable
+
+### C-021 Sensitivity Scoring and Evidence Packet
+- Status: **complete** (sensitivity scorer, evidence model, and tests landed)
+- Output: `.planning/claude/C-021-SENSITIVITY-SCORING-AND-EVIDENCE.md`
+- Focus:
+  - bounded sensitivity scoring that uses path, filename, extension, MIME/category, and content-aware file truth
+  - reusable scanner-side sensitivity classification for both full scan and single-file inspection
+  - evidence-friendly internal structure for future explainability without broad contract churn
+  - service-side tests for conservative sensitivity behavior
+- Codex target:
+  - let Codex improve AI prompt projection and shell reasoning against stronger sensitivity truth
+  - avoid overlap with prompt shaping or app-side UX work
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+  - do not redesign planning prompts or public app contracts broadly in this packet
+
+### C-022 Duplicate Evidence and Confidence Packet
+- Status: **complete** (duplicate analyzer, evidence fields, confidence scoring, and 23 tests landed)
+- Output: `.planning/claude/C-022-DUPLICATE-EVIDENCE-AND-CONFIDENCE.md`
+- Focus:
+  - bounded duplicate analysis and confidence truth
+  - canonical rationale and duplicate risk flags
+  - scanner integration and tests
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-023 Persisted Duplicate Review and Query APIs Packet
+- Status: **complete** (schema, repository, pipe route, service wiring, and 14 tests landed)
+- Output: `.planning/claude/C-023-PERSISTED-DUPLICATE-REVIEW-AND-QUERY-APIS.md`
+- Focus:
+  - persist duplicate review truth with confidence, canonical rationale, and risk flags
+  - expose bounded retained-session duplicate queries for app consumption
+  - keep duplicate review durable across full scans and retained sessions
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-024 File Inspection and Sensitivity Explainability APIs Packet
+- Status: **complete** (contracts, routes, handlers verified; 15 tests passing)
+- Output: `.planning/claude/C-024-FILE-INSPECTION-AND-SENSITIVITY-EXPLAINABILITY-APIS.md`
+- Focus:
+  - bounded live file inspection through the service
+  - additive explainability contracts for MIME/category truth and sensitivity evidence
+  - conservative outcomes for missing, excluded, or protected paths
+  - service and contract tests
+- Codex target:
+  - let the existing shell gain trustworthy "why this file matters" drill-in later without UI architecture churn
+  - keep current Memory / Plan Review surfaces stable while backend explainability grows
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-025 Duplicate Group Detail and Evidence APIs Packet
+- Status: **complete** (schema, evidence persistence, detail route, contracts, and 8 tests landed)
+- Output: `.planning/claude/C-025-DUPLICATE-GROUP-DETAIL-AND-EVIDENCE-APIS.md`
+- Focus:
+  - additive duplicate evidence persistence and drill-in detail
+  - bounded read-only route for one retained duplicate group
+  - canonical, confidence, risk-flag, evidence, and member posture detail
+  - repository and service tests
+- Codex target:
+  - let the current shell evolve from duplicate summary cards into trustworthy duplicate-group explanation without app-side reinvention
+  - keep existing Memory / Plan Review surfaces stable while backend duplicate drill-in grows
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-026 Duplicate Action Eligibility and Review APIs Packet
+- Status: **complete** (read-only retained duplicate action review route, evaluator, and 14 tests landed)
+- Output: `.planning/claude/C-026-DUPLICATE-ACTION-ELIGIBILITY-AND-REVIEW-APIS.md`
+- Focus:
+  - read-only retained duplicate action review under current policy
+  - deterministic cleanup eligibility, review requirement, and recommended posture
+  - bounded blocked reasons and action notes for one retained duplicate group
+  - service and contract tests
+- Codex target:
+  - let the current shell evolve from duplicate explanation into duplicate decision support without app-side rule reinvention
+  - keep existing Memory / Plan Review surfaces stable while backend duplicate review grows
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-027 Duplicate Cleanup Preview APIs Packet
+- Status: **complete** (read-only cleanup preview route, contracts, and 7 tests landed)
+- Output: `.planning/claude/C-027-DUPLICATE-CLEANUP-PREVIEW-APIS.md`
+- Focus:
+  - read-only retained duplicate cleanup preview for one group
+  - deterministic operation preview using the existing cleanup planner
+  - bounded blocked reasons, action notes, and keep/quarantine path truth
+  - service and contract tests
+- Codex target:
+  - let the current shell evolve from duplicate decision support into concrete cleanup preview without app-side cleanup logic
+  - keep existing Memory / Plan Review surfaces stable while backend duplicate preview grows
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-028 Duplicate Cleanup Batch Preview APIs Packet
+- Status: **complete** (read-only batch cleanup preview route, contracts, and 7 tests landed)
+- Output: `.planning/claude/C-028-DUPLICATE-CLEANUP-BATCH-PREVIEW-APIS.md`
+- Focus:
+  - read-only retained-session duplicate cleanup batch preview
+  - deterministic aggregate preview using the existing single-group preview logic
+  - bounded eligible-versus-blocked group summaries and total operation counts
+  - service and contract tests
+- Codex target:
+  - let the current shell evolve from one-group duplicate drill-in into later session-level cleanup impact review without app-side cleanup logic
+  - keep existing Memory / Plan Review surfaces stable while backend duplicate preview grows
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-029 Duplicate Cleanup Plan Preview APIs Packet
+- Status: **ready**
+- Output: `.planning/claude/C-029-DUPLICATE-CLEANUP-PLAN-PREVIEW-APIS.md`
+- Focus:
+  - read-only retained-session duplicate cleanup plan preview
+  - deterministic included-vs-blocked duplicate group selection
+  - bounded grouped operations, rationale, and rollback-oriented notes for review surfaces
+  - service and contract tests
+- Codex target:
+  - let the current shell evolve from cleanup impact review into a future duplicate cleanup plan-review step without app-side cleanup logic
+  - keep existing Memory / Plan Review surfaces stable while backend duplicate planning grows
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership

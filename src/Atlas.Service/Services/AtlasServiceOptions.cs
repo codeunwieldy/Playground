@@ -23,4 +23,12 @@ public sealed class AtlasServiceOptions
 
     /// <summary>Maximum changed paths for incremental composition. Beyond this, fall back to full rescan.</summary>
     public int MaxIncrementalPaths { get; set; } = 500;
+
+    /// <summary>
+    /// Maximum fraction of delta paths that can fail inspection before the composed session
+    /// is considered too unsafe to retain. Above this threshold, Atlas falls back to a full rescan
+    /// instead of persisting a degraded session. Range: 0.0 (no tolerance) to 1.0 (always retain).
+    /// Default: 0.5 (50%).
+    /// </summary>
+    public double MaxDegradedRatio { get; set; } = 0.5;
 }

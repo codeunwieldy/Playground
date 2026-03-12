@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atlas.Core.Contracts;
+using Atlas.Core.Planning;
 using Atlas.Storage.Repositories;
 using Microsoft.Extensions.Options;
 
@@ -16,6 +17,9 @@ public interface IAtlasPlanningClient
 
 public sealed class OpenAIResponsesPlanningClient : IAtlasPlanningClient
 {
+    private static readonly SafeDuplicateCleanupPlanner SafeDuplicateCleanupPlanner = new();
+    private static readonly PlanningPromptPayloadBuilder PlanningPromptPayloadBuilder = new();
+    private static readonly VoiceIntentSafetyGuard VoiceIntentSafetyGuard = new();
     private readonly HttpClient _httpClient;
     private readonly OpenAIOptions _options;
     private readonly IConversationRepository? _conversationRepository;
@@ -138,7 +142,7 @@ public sealed class OpenAIResponsesPlanningClient : IAtlasPlanningClient
                 var parsed = JsonSerializer.Deserialize<VoiceIntentResponse>(jsonText, JsonOptions);
                 if (parsed is not null)
                 {
-                    return parsed;
+                    return VoiceIntentSafetyGuard.Apply(request.Transcript, parsed);
                 }
             }
             catch
@@ -147,36 +151,21 @@ public sealed class OpenAIResponsesPlanningClient : IAtlasPlanningClient
             }
         }
 
-        return new VoiceIntentResponse
+        return VoiceIntentSafetyGuard.Apply(request.Transcript, new VoiceIntentResponse
         {
             ParsedIntent = payload?.OutputText ?? request.Transcript,
             NeedsConfirmation = true
-        };
+        });
     }
 
     private string BuildPlanningPayload(PlanRequest request)
     {
         var maxItems = _options.MaxInventoryItemsInPrompt;
-        var sampledInventory = request.Scan.Inventory
-            .Take(request.PolicyProfile.ScanRoots.Count > 0 ? maxItems : 100)
-            .Select(item => new
-            {
-                item.Path,
-                item.Category,
-                item.SizeBytes,
-                item.Sensitivity,
-                item.IsSyncManaged,
-                item.IsDuplicateCandidate
-            });
+        var payload = PlanningPromptPayloadBuilder.Build(
+            request,
+            request.PolicyProfile.ScanRoots.Count > 0 ? maxItems : 100);
 
-        return JsonSerializer.Serialize(new
-        {
-            request.UserIntent,
-            request.PolicyProfile,
-            volumes = request.Scan.Volumes,
-            duplicates = request.Scan.Duplicates,
-            inventory = sampledInventory
-        }, JsonOptions);
+        return JsonSerializer.Serialize(payload, JsonOptions);
     }
 
     private PlanResponse ParsePlanResponse(string jsonText, PlanRequest request)
@@ -239,32 +228,45 @@ public sealed class OpenAIResponsesPlanningClient : IAtlasPlanningClient
             });
         }
 
-        foreach (var duplicate in request.Scan.Duplicates.Where(static group => group.Confidence >= 0.985d))
+        var duplicatePlan = SafeDuplicateCleanupPlanner.BuildOperations(
+            request.Scan.Duplicates,
+            request.Scan.Inventory,
+            request.PolicyProfile.DuplicateAutoDeleteConfidenceThreshold);
+
+        foreach (var operation in duplicatePlan.Operations)
         {
-            foreach (var duplicatePath in duplicate.Paths.Where(path => !string.Equals(path, duplicate.CanonicalPath, StringComparison.OrdinalIgnoreCase)))
-            {
-                plan.Operations.Add(new PlanOperation
-                {
-                    Kind = OperationKind.DeleteToQuarantine,
-                    SourcePath = duplicatePath,
-                    Description = $"Quarantine a safe duplicate from group {duplicate.GroupId}.",
-                    Confidence = duplicate.Confidence,
-                    MarksSafeDuplicate = true,
-                    Sensitivity = SensitivityLevel.Low,
-                    GroupId = duplicate.GroupId
-                });
-            }
+            plan.Operations.Add(operation);
         }
 
         plan.RequiresReview = plan.Operations.Any(static operation => operation.Kind == OperationKind.DeleteToQuarantine);
+        if (duplicatePlan.HasSkippedRiskyCandidates)
+        {
+            plan.Rationale += " Atlas excluded sensitive, sync-managed, or user-protected duplicate candidates from automatic quarantine staging.";
+        }
+
         plan.RiskSummary = new RiskEnvelope
         {
-            SensitivityScore = 0.25d,
+            SensitivityScore = plan.Operations.Count == 0
+                ? 0.2d
+                : plan.Operations.Max(static operation => operation.Sensitivity switch
+                {
+                    SensitivityLevel.Critical => 1.0d,
+                    SensitivityLevel.High => 0.8d,
+                    SensitivityLevel.Medium => 0.45d,
+                    SensitivityLevel.Low => 0.2d,
+                    _ => 0.3d
+                }),
             SystemScore = 0.2d,
             SyncRisk = 0.1d,
             ReversibilityScore = 0.95d,
             Confidence = 0.84d,
-            ApprovalRequirement = plan.RequiresReview ? ApprovalRequirement.Review : ApprovalRequirement.None
+            ApprovalRequirement = plan.RequiresReview ? ApprovalRequirement.Review : ApprovalRequirement.None,
+            BlockedReasons = duplicatePlan.HasSkippedRiskyCandidates
+                ? new List<string>
+                {
+                    "Sensitive, sync-managed, or user-protected duplicate candidates were excluded from automatic quarantine staging in fallback mode."
+                }
+                : new List<string>()
         };
 
         return new PlanResponse

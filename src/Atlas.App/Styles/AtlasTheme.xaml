@@ -18,6 +18,10 @@
             <Color x:Key="AtlasCopperGlowColor">#62E4BA96</Color>
             <Color x:Key="AtlasButtonTextColor">#FFF9FCFC</Color>
             <Color x:Key="AtlasSecondaryButtonColor">#F3EDF4F4</Color>
+            <Color x:Key="AtlasOrbHaloColor">#66A7E6D9</Color>
+            <Color x:Key="AtlasOrbRingColor">#85FFFFFF</Color>
+            <Color x:Key="AtlasOrbCoreStartColor">#FFFDFEFE</Color>
+            <Color x:Key="AtlasOrbCoreEndColor">#FFD8F1ED</Color>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
             <Color x:Key="AtlasAccentColor">#FF58C9C1</Color>
@@ -35,6 +39,10 @@
             <Color x:Key="AtlasCopperGlowColor">#406C4831</Color>
             <Color x:Key="AtlasButtonTextColor">#FF041013</Color>
             <Color x:Key="AtlasSecondaryButtonColor">#CC193137</Color>
+            <Color x:Key="AtlasOrbHaloColor">#8057D2C8</Color>
+            <Color x:Key="AtlasOrbRingColor">#66D8F3EE</Color>
+            <Color x:Key="AtlasOrbCoreStartColor">#FF21353A</Color>
+            <Color x:Key="AtlasOrbCoreEndColor">#FF0D181C</Color>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
@@ -51,10 +59,17 @@
     <SolidColorBrush x:Key="AtlasCopperGlowBrush" Color="{ThemeResource AtlasCopperGlowColor}" />
     <SolidColorBrush x:Key="AtlasButtonTextBrush" Color="{ThemeResource AtlasButtonTextColor}" />
     <SolidColorBrush x:Key="AtlasSecondaryButtonBrush" Color="{ThemeResource AtlasSecondaryButtonColor}" />
+    <SolidColorBrush x:Key="AtlasOrbHaloBrush" Color="{ThemeResource AtlasOrbHaloColor}" />
+    <SolidColorBrush x:Key="AtlasOrbRingBrush" Color="{ThemeResource AtlasOrbRingColor}" />
 
     <LinearGradientBrush x:Key="AtlasShellGradientBrush" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="{ThemeResource AtlasShellGradientStartColor}" Offset="0" />
         <GradientStop Color="{ThemeResource AtlasShellGradientEndColor}" Offset="1" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="AtlasOrbCoreBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="{ThemeResource AtlasOrbCoreStartColor}" Offset="0" />
+        <GradientStop Color="{ThemeResource AtlasOrbCoreEndColor}" Offset="1" />
     </LinearGradientBrush>
 
     <Style x:Key="AtlasEyebrowStyle" TargetType="TextBlock">
@@ -128,6 +143,45 @@
     <Style x:Key="AtlasPanelStyle" TargetType="Border" BasedOn="{StaticResource AtlasCardStyle}">
         <Setter Property="Background" Value="{StaticResource AtlasPanelStrongBrush}" />
         <Setter Property="CornerRadius" Value="28" />
+    </Style>
+
+    <Style x:Key="AtlasElevatedPanelStyle" TargetType="Border" BasedOn="{StaticResource AtlasPanelStyle}">
+        <Setter Property="CornerRadius" Value="30" />
+        <Setter Property="Shadow">
+            <Setter.Value>
+                <ThemeShadow />
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AtlasInsetPanelStyle" TargetType="Border" BasedOn="{StaticResource AtlasCardStyle}">
+        <Setter Property="Background" Value="{StaticResource AtlasPanelStrongBrush}" />
+        <Setter Property="CornerRadius" Value="20" />
+        <Setter Property="Shadow">
+            <Setter.Value>
+                <ThemeShadow />
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AtlasMicroPanelStyle" TargetType="Border" BasedOn="{StaticResource AtlasCardStyle}">
+        <Setter Property="Background" Value="{StaticResource AtlasCardBrush}" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="Shadow">
+            <Setter.Value>
+                <ThemeShadow />
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AtlasOrbSurfaceStyle" TargetType="Border" BasedOn="{StaticResource AtlasPanelStyle}">
+        <Setter Property="Background" Value="{StaticResource AtlasCardBrush}" />
+        <Setter Property="CornerRadius" Value="32" />
+        <Setter Property="Shadow">
+            <Setter.Value>
+                <ThemeShadow />
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style x:Key="AtlasPrimaryButtonStyle" TargetType="Button">

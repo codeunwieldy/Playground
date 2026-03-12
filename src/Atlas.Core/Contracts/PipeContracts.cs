@@ -373,6 +373,109 @@ public sealed class InventoryFileSummary
 [ProtoContract]
 public sealed class DriftSnapshotRequest { }
 
+// ── Session duplicate review contracts (C-023) ──────────────────────────────
+
+[ProtoContract]
+public sealed class SessionDuplicateListRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public int Limit { get; set; } = 200;
+    [ProtoMember(3)] public int Offset { get; set; }
+}
+
+[ProtoContract]
+public sealed class SessionDuplicateListResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public List<DuplicateGroupSummary> Groups { get; set; } = new();
+    [ProtoMember(3)] public int TotalCount { get; set; }
+}
+
+[ProtoContract]
+public sealed class DuplicateGroupSummary
+{
+    [ProtoMember(1)] public string GroupId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string CanonicalPath { get; set; } = string.Empty;
+    [ProtoMember(3)] public double MatchConfidence { get; set; }
+    [ProtoMember(4)] public double CleanupConfidence { get; set; }
+    [ProtoMember(5)] public string CanonicalReason { get; set; } = string.Empty;
+    [ProtoMember(6)] public SensitivityLevel MaxSensitivity { get; set; }
+    [ProtoMember(7)] public bool HasSensitiveMembers { get; set; }
+    [ProtoMember(8)] public bool HasSyncManagedMembers { get; set; }
+    [ProtoMember(9)] public bool HasProtectedMembers { get; set; }
+    [ProtoMember(10)] public List<string> MemberPaths { get; set; } = new();
+    [ProtoMember(11)] public int MemberCount { get; set; }
+}
+
+// ── File inspection and explainability contracts (C-024) ─────────────────────
+
+[ProtoContract]
+public sealed class FileInspectionRequest
+{
+    [ProtoMember(1)] public string FilePath { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class FileInspectionResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string Outcome { get; set; } = string.Empty;
+
+    // Identity
+    [ProtoMember(3)] public string Path { get; set; } = string.Empty;
+    [ProtoMember(4)] public string Name { get; set; } = string.Empty;
+    [ProtoMember(5)] public string Extension { get; set; } = string.Empty;
+
+    // Type truth
+    [ProtoMember(6)] public string Category { get; set; } = string.Empty;
+    [ProtoMember(7)] public string MimeType { get; set; } = string.Empty;
+    [ProtoMember(8)] public bool ContentSniffSucceeded { get; set; }
+    [ProtoMember(9)] public bool HasContentFingerprint { get; set; }
+
+    // Size/time
+    [ProtoMember(10)] public long SizeBytes { get; set; }
+    [ProtoMember(11)] public long LastModifiedUnixTimeSeconds { get; set; }
+
+    // Sensitivity
+    [ProtoMember(12)] public SensitivityLevel Sensitivity { get; set; }
+    [ProtoMember(13)] public List<SensitivityEvidenceSummary> SensitivityEvidence { get; set; } = new();
+
+    // Posture
+    [ProtoMember(14)] public bool IsSyncManaged { get; set; }
+    [ProtoMember(15)] public bool IsDuplicateCandidate { get; set; }
+}
+
+[ProtoContract]
+public sealed class SensitivityEvidenceSummary
+{
+    [ProtoMember(1)] public string Signal { get; set; } = string.Empty;
+    [ProtoMember(2)] public string Detail { get; set; } = string.Empty;
+}
+
+// ── Persisted session file detail contract (C-024) ───────────────────────────
+
+[ProtoContract]
+public sealed class SessionFileDetailRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string FilePath { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class SessionFileDetailResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string Path { get; set; } = string.Empty;
+    [ProtoMember(3)] public string Name { get; set; } = string.Empty;
+    [ProtoMember(4)] public string Extension { get; set; } = string.Empty;
+    [ProtoMember(5)] public string Category { get; set; } = string.Empty;
+    [ProtoMember(6)] public long SizeBytes { get; set; }
+    [ProtoMember(7)] public long LastModifiedUnixTimeSeconds { get; set; }
+    [ProtoMember(8)] public SensitivityLevel Sensitivity { get; set; }
+    [ProtoMember(9)] public bool IsSyncManaged { get; set; }
+    [ProtoMember(10)] public bool IsDuplicateCandidate { get; set; }
+}
+
 [ProtoContract]
 public sealed class DriftSnapshotResponse
 {
@@ -431,4 +534,129 @@ public sealed class DiffFileSummary
     [ProtoMember(4)] public long NewerSizeBytes { get; set; }
     [ProtoMember(5)] public long OlderLastModifiedUnix { get; set; }
     [ProtoMember(6)] public long NewerLastModifiedUnix { get; set; }
+}
+
+// ── Duplicate group detail contracts (C-025) ────────────────────────────────
+
+[ProtoContract]
+public sealed class DuplicateGroupDetailRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string GroupId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class DuplicateGroupDetailResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string GroupId { get; set; } = string.Empty;
+    [ProtoMember(3)] public string CanonicalPath { get; set; } = string.Empty;
+    [ProtoMember(4)] public double MatchConfidence { get; set; }
+    [ProtoMember(5)] public double CleanupConfidence { get; set; }
+    [ProtoMember(6)] public string CanonicalReason { get; set; } = string.Empty;
+    [ProtoMember(7)] public SensitivityLevel MaxSensitivity { get; set; }
+    [ProtoMember(8)] public bool HasSensitiveMembers { get; set; }
+    [ProtoMember(9)] public bool HasSyncManagedMembers { get; set; }
+    [ProtoMember(10)] public bool HasProtectedMembers { get; set; }
+    [ProtoMember(11)] public List<string> MemberPaths { get; set; } = new();
+    [ProtoMember(12)] public int MemberCount { get; set; }
+    [ProtoMember(13)] public List<DuplicateEvidenceSummary> Evidence { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class DuplicateEvidenceSummary
+{
+    [ProtoMember(1)] public string Signal { get; set; } = string.Empty;
+    [ProtoMember(2)] public string Detail { get; set; } = string.Empty;
+}
+
+// ── Duplicate action eligibility review contracts (C-026) ────────────────────
+
+[ProtoContract]
+public sealed class DuplicateActionReviewRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string GroupId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class DuplicateActionReviewResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public bool IsCleanupEligible { get; set; }
+    [ProtoMember(3)] public bool RequiresReview { get; set; }
+    [ProtoMember(4)] public DuplicateActionPosture RecommendedPosture { get; set; }
+    [ProtoMember(5)] public List<string> BlockedReasons { get; set; } = new();
+    [ProtoMember(6)] public List<string> ActionNotes { get; set; } = new();
+    [ProtoMember(7)] public string GroupId { get; set; } = string.Empty;
+    [ProtoMember(8)] public double ConfidenceThresholdUsed { get; set; }
+}
+
+// ── Duplicate cleanup preview contracts (C-027) ──────────────────────────────
+
+[ProtoContract]
+public sealed class DuplicateCleanupPreviewRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string GroupId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class DuplicateCleanupPreviewResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public bool IsPreviewAvailable { get; set; }
+    [ProtoMember(3)] public DuplicateActionPosture RecommendedPosture { get; set; }
+    [ProtoMember(4)] public string CanonicalPath { get; set; } = string.Empty;
+    [ProtoMember(5)] public List<CleanupOperationPreview> Operations { get; set; } = new();
+    [ProtoMember(6)] public List<string> BlockedReasons { get; set; } = new();
+    [ProtoMember(7)] public List<string> ActionNotes { get; set; } = new();
+    [ProtoMember(8)] public string GroupId { get; set; } = string.Empty;
+    [ProtoMember(9)] public double ConfidenceThresholdUsed { get; set; }
+    [ProtoMember(10)] public int OperationCount { get; set; }
+}
+
+[ProtoContract]
+public sealed class CleanupOperationPreview
+{
+    [ProtoMember(1)] public string SourcePath { get; set; } = string.Empty;
+    [ProtoMember(2)] public string Kind { get; set; } = string.Empty;
+    [ProtoMember(3)] public string Description { get; set; } = string.Empty;
+    [ProtoMember(4)] public double Confidence { get; set; }
+    [ProtoMember(5)] public string Sensitivity { get; set; } = string.Empty;
+}
+
+// ── Duplicate cleanup batch preview contracts (C-028) ─────────────────────
+
+[ProtoContract]
+public sealed class DuplicateCleanupBatchPreviewRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public int MaxGroups { get; set; } = 50;
+    [ProtoMember(3)] public int MaxOperationsPerGroup { get; set; } = 20;
+}
+
+[ProtoContract]
+public sealed class DuplicateCleanupBatchPreviewResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public int GroupsEvaluated { get; set; }
+    [ProtoMember(3)] public int GroupsPreviewable { get; set; }
+    [ProtoMember(4)] public int GroupsBlocked { get; set; }
+    [ProtoMember(5)] public int TotalOperationCount { get; set; }
+    [ProtoMember(6)] public double ConfidenceThresholdUsed { get; set; }
+    [ProtoMember(7)] public List<BatchGroupPreviewSummary> Groups { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class BatchGroupPreviewSummary
+{
+    [ProtoMember(1)] public string GroupId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string CanonicalPath { get; set; } = string.Empty;
+    [ProtoMember(3)] public bool IsPreviewable { get; set; }
+    [ProtoMember(4)] public DuplicateActionPosture RecommendedPosture { get; set; }
+    [ProtoMember(5)] public int OperationCount { get; set; }
+    [ProtoMember(6)] public List<string> BlockedReasons { get; set; } = new();
+    [ProtoMember(7)] public List<string> ActionNotes { get; set; } = new();
+    [ProtoMember(8)] public double CleanupConfidence { get; set; }
 }
