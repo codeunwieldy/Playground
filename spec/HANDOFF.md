@@ -11,6 +11,8 @@
 
 ## What Codex App Owns
 - WinUI project, visual system, motion, interaction design, XAML implementation, shell orchestration, restore/build/run verification, and the final UX shape of plan review, optimization, undo, and command-center flows
+- Current Codex UI lane also includes the new `Atlas Memory` workspace, which is session-backed today and intended to consume Claude's `C-008` persisted history APIs next
+- Current next Codex lane is scan-intelligence UX: session-pair comparison, drift drill-in, provenance surfaces, hotspot summaries, and a rescan-story lane that now consumes `C-016` while staying ready for Claude's queued `C-017` incremental-composition activation work
 
 ## What Claude Code Can Own In Parallel
 - Backend-heavy implementation packets for service/runtime work that do not touch `src/Atlas.App/**`

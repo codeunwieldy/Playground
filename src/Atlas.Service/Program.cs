@@ -1,7 +1,9 @@
 using Atlas.AI;
 using Atlas.Core.Planning;
 using Atlas.Core.Policies;
+using Atlas.Core.Scanning;
 using Atlas.Service.Services;
+using Atlas.Service.Services.DeltaSources;
 using Atlas.Storage;
 using Atlas.Storage.Repositories;
 
@@ -43,15 +45,25 @@ builder.Services.AddSingleton<FileScanner>();
 builder.Services.AddSingleton<PlanExecutionService>();
 builder.Services.AddSingleton<OptimizationScanner>();
 
+// Delta scanning sources and capability detection (C-012, C-014)
+builder.Services.AddSingleton<IUsnJournalReader, UsnJournalReader>();
+builder.Services.AddSingleton<IDeltaSource, UsnJournalDeltaSource>();
+builder.Services.AddSingleton<IDeltaSource, FileSystemWatcherDeltaSource>();
+builder.Services.AddSingleton<IDeltaSource, ScheduledRescanDeltaSource>();
+builder.Services.AddSingleton<DeltaCapabilityDetector>();
+
 builder.Services.AddSingleton<Atlas.Storage.Repositories.SqliteConnectionFactory>();
 builder.Services.AddSingleton<IPlanRepository, PlanRepository>();
 builder.Services.AddSingleton<IRecoveryRepository, RecoveryRepository>();
 builder.Services.AddSingleton<IOptimizationRepository, OptimizationRepository>();
 builder.Services.AddSingleton<IConfigurationRepository, ConfigurationRepository>();
 builder.Services.AddSingleton<IConversationRepository, ConversationRepository>();
+builder.Services.AddSingleton<IInventoryRepository, InventoryRepository>();
+builder.Services.AddSingleton<IUsnCheckpointRepository, UsnCheckpointRepository>();
 
 builder.Services.AddHostedService<AtlasStartupWorker>();
 builder.Services.AddHostedService<AtlasPipeServerWorker>();
+builder.Services.AddHostedService<RescanOrchestrationWorker>();
 
 var host = builder.Build();
 await host.RunAsync();

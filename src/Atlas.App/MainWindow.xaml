@@ -51,7 +51,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="HistoryItem" Tag="history" Content="Atlas Memory">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="History" />
+                        <SymbolIcon Symbol="Library" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="SettingsItem" Tag="settings" Content="Policy Studio">
@@ -155,7 +155,7 @@
                                 </AppBarButton>
                                 <AppBarButton Click="OnQuickNavigateClick" Tag="history" Label="Memory">
                                     <AppBarButton.Icon>
-                                        <SymbolIcon Symbol="History" />
+                                        <SymbolIcon Symbol="Library" />
                                     </AppBarButton.Icon>
                                 </AppBarButton>
                             </CommandBar>

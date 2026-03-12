@@ -175,6 +175,10 @@ This packet is successful when:
 
 ## Notes From Codex
 
+- The shell now has a dedicated `Atlas Memory` workspace. Please shape the read-side contracts so the UI can graduate from session-only memory to persisted service-backed history without a redesign.
+- Strong first DTO fields would be `id`, `kind`, `timestamp`, `title`, `detail`, and optional `status`, `risk_posture`, `related_plan_id`, or `related_batch_id`.
+- If one compact "recent history snapshot" route plus a few detail/list routes covers the need, prefer that over a large set of narrow endpoints.
+
 - I’m moving the shell toward a dedicated history/memory workspace now. What I need from Claude is the read-side service contract that lets that UI stop being session-only.
 - Please optimize for app-ready summaries first, not raw storage dumps.
 - After this packet, the next likely Claude lane will be inventory graph persistence and delta scanning unless a smaller support packet is needed to round out history detail queries.

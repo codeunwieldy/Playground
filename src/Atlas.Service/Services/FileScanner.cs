@@ -35,15 +35,15 @@ public sealed class FileScanner(PathSafetyClassifier pathSafetyClassifier)
         [".msi"] = "Installers"
     };
 
-    public Task<ScanResponse> ScanAsync(PolicyProfile profile, ScanRequest request, CancellationToken cancellationToken)
+    /// <summary>
+    /// Returns a fresh snapshot of all ready drives.
+    /// </summary>
+    public static List<VolumeSnapshot> SnapshotVolumes()
     {
-        var response = new ScanResponse();
-        var roots = request.Roots.Count > 0 ? request.Roots : profile.ScanRoots;
-        var maxFiles = request.MaxFiles > 0 ? request.MaxFiles : 25000;
-
-        foreach (var drive in DriveInfo.GetDrives().Where(static drive => drive.IsReady))
+        var volumes = new List<VolumeSnapshot>();
+        foreach (var drive in DriveInfo.GetDrives().Where(static d => d.IsReady))
         {
-            response.Volumes.Add(new VolumeSnapshot
+            volumes.Add(new VolumeSnapshot
             {
                 RootPath = drive.RootDirectory.FullName,
                 DriveFormat = drive.DriveFormat,
@@ -53,6 +53,50 @@ public sealed class FileScanner(PathSafetyClassifier pathSafetyClassifier)
                 FreeSpaceBytes = drive.AvailableFreeSpace
             });
         }
+        return volumes;
+    }
+
+    /// <summary>
+    /// Inspects a single file and returns its inventory item.
+    /// Returns null if the file does not exist, is inaccessible, or is excluded/protected.
+    /// </summary>
+    public FileInventoryItem? InspectFile(PolicyProfile profile, string filePath)
+    {
+        try
+        {
+            if (!File.Exists(filePath)) return null;
+            if (pathSafetyClassifier.IsProtectedPath(profile, filePath)) return null;
+            if (pathSafetyClassifier.IsExcludedPath(profile, filePath)) return null;
+
+            var info = new FileInfo(filePath);
+            return new FileInventoryItem
+            {
+                Path = info.FullName,
+                Name = info.Name,
+                Extension = info.Extension,
+                Category = ClassifyCategory(info.Extension),
+                MimeType = info.Extension.Trim('.').ToLowerInvariant(),
+                SizeBytes = info.Length,
+                LastModifiedUnixTimeSeconds = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds(),
+                Sensitivity = ClassifySensitivity(profile, info.FullName),
+                IsSyncManaged = pathSafetyClassifier.IsSyncManaged(profile, info.FullName),
+                IsProtectedByUser = false,
+                IsDuplicateCandidate = info.Length > 0
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public Task<ScanResponse> ScanAsync(PolicyProfile profile, ScanRequest request, CancellationToken cancellationToken)
+    {
+        var response = new ScanResponse();
+        var roots = request.Roots.Count > 0 ? request.Roots : profile.ScanRoots;
+        var maxFiles = request.MaxFiles > 0 ? request.MaxFiles : 25000;
+
+        response.Volumes.AddRange(SnapshotVolumes());
 
         foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
         {

@@ -106,3 +106,329 @@ public sealed class ProgressEvent
     [ProtoMember(2)] public string Message { get; set; } = string.Empty;
     [ProtoMember(3)] public double Progress { get; set; }
 }
+
+// ── History read-side contracts (C-008) ─────────────────────────────────────
+
+[ProtoContract]
+public sealed class HistorySnapshotRequest
+{
+    [ProtoMember(1)] public int Limit { get; set; } = 10;
+}
+
+[ProtoContract]
+public sealed class HistorySnapshotResponse
+{
+    [ProtoMember(1)] public List<HistoryPlanSummary> RecentPlans { get; set; } = new();
+    [ProtoMember(2)] public List<HistoryCheckpointSummary> RecentCheckpoints { get; set; } = new();
+    [ProtoMember(3)] public List<HistoryQuarantineSummary> RecentQuarantine { get; set; } = new();
+    [ProtoMember(4)] public List<HistoryFindingSummary> RecentFindings { get; set; } = new();
+    [ProtoMember(5)] public List<HistoryTraceSummary> RecentTraces { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class HistoryListRequest
+{
+    [ProtoMember(1)] public int Limit { get; set; } = 50;
+    [ProtoMember(2)] public int Offset { get; set; }
+    [ProtoMember(3)] public string Stage { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class HistoryPlanListResponse
+{
+    [ProtoMember(1)] public List<HistoryPlanSummary> Plans { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class HistoryPlanDetailRequest
+{
+    [ProtoMember(1)] public string PlanId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class HistoryPlanDetailResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public PlanGraph Plan { get; set; } = new();
+    [ProtoMember(3)] public List<ExecutionBatch> Batches { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class HistoryCheckpointListResponse
+{
+    [ProtoMember(1)] public List<HistoryCheckpointSummary> Checkpoints { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class HistoryQuarantineListResponse
+{
+    [ProtoMember(1)] public List<HistoryQuarantineSummary> Items { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class HistoryFindingListResponse
+{
+    [ProtoMember(1)] public List<HistoryFindingSummary> Findings { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class HistoryTraceListResponse
+{
+    [ProtoMember(1)] public List<HistoryTraceSummary> Traces { get; set; } = new();
+}
+
+// ── History summary DTOs ────────────────────────────────────────────────────
+
+[ProtoContract]
+public sealed class HistoryPlanSummary
+{
+    [ProtoMember(1)] public string PlanId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string Scope { get; set; } = string.Empty;
+    [ProtoMember(3)] public string Summary { get; set; } = string.Empty;
+    [ProtoMember(4)] public int OperationCount { get; set; }
+    [ProtoMember(5)] public bool RequiresReview { get; set; }
+    [ProtoMember(6)] public string CreatedUtc { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class HistoryCheckpointSummary
+{
+    [ProtoMember(1)] public string CheckpointId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string BatchId { get; set; } = string.Empty;
+    [ProtoMember(3)] public int OperationCount { get; set; }
+    [ProtoMember(4)] public int QuarantineCount { get; set; }
+    [ProtoMember(5)] public string CreatedUtc { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class HistoryQuarantineSummary
+{
+    [ProtoMember(1)] public string QuarantineId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string OriginalPath { get; set; } = string.Empty;
+    [ProtoMember(3)] public string Reason { get; set; } = string.Empty;
+    [ProtoMember(4)] public string RetentionUntilUtc { get; set; } = string.Empty;
+    [ProtoMember(5)] public string PlanId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class HistoryFindingSummary
+{
+    [ProtoMember(1)] public string FindingId { get; set; } = string.Empty;
+    [ProtoMember(2)] public OptimizationKind Kind { get; set; }
+    [ProtoMember(3)] public string Target { get; set; } = string.Empty;
+    [ProtoMember(4)] public bool CanAutoFix { get; set; }
+    [ProtoMember(5)] public string CreatedUtc { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class HistoryTraceSummary
+{
+    [ProtoMember(1)] public string TraceId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string Stage { get; set; } = string.Empty;
+    [ProtoMember(3)] public string CreatedUtc { get; set; } = string.Empty;
+}
+
+// ── Inventory read-side contracts (C-011) ────────────────────────────────────
+
+[ProtoContract]
+public sealed class InventorySnapshotRequest
+{
+    [ProtoMember(1)] public int Limit { get; set; } = 1;
+}
+
+[ProtoContract]
+public sealed class InventorySnapshotResponse
+{
+    [ProtoMember(1)] public bool HasSession { get; set; }
+    [ProtoMember(2)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(3)] public int FilesScanned { get; set; }
+    [ProtoMember(4)] public int DuplicateGroupCount { get; set; }
+    [ProtoMember(5)] public int RootCount { get; set; }
+    [ProtoMember(6)] public int VolumeCount { get; set; }
+    [ProtoMember(7)] public string CreatedUtc { get; set; } = string.Empty;
+
+    // ── Provenance (C-016) ──────────────────────────────────────────────────
+    [ProtoMember(8)] public string Trigger { get; set; } = string.Empty;
+    [ProtoMember(9)] public string BuildMode { get; set; } = string.Empty;
+    [ProtoMember(10)] public string DeltaSource { get; set; } = string.Empty;
+    [ProtoMember(11)] public string BaselineSessionId { get; set; } = string.Empty;
+    [ProtoMember(12)] public bool IsTrusted { get; set; }
+    [ProtoMember(13)] public string CompositionNote { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class InventorySessionListRequest
+{
+    [ProtoMember(1)] public int Limit { get; set; } = 20;
+    [ProtoMember(2)] public int Offset { get; set; }
+}
+
+[ProtoContract]
+public sealed class InventorySessionListResponse
+{
+    [ProtoMember(1)] public List<InventorySessionSummary> Sessions { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class InventorySessionDetailRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class InventorySessionDetailResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(3)] public int FilesScanned { get; set; }
+    [ProtoMember(4)] public int DuplicateGroupCount { get; set; }
+    [ProtoMember(5)] public string CreatedUtc { get; set; } = string.Empty;
+    [ProtoMember(6)] public List<string> Roots { get; set; } = new();
+    [ProtoMember(7)] public List<InventoryVolumeSummary> Volumes { get; set; } = new();
+
+    // ── Provenance (C-016) ──────────────────────────────────────────────────
+    [ProtoMember(8)] public string Trigger { get; set; } = string.Empty;
+    [ProtoMember(9)] public string BuildMode { get; set; } = string.Empty;
+    [ProtoMember(10)] public string DeltaSource { get; set; } = string.Empty;
+    [ProtoMember(11)] public string BaselineSessionId { get; set; } = string.Empty;
+    [ProtoMember(12)] public bool IsTrusted { get; set; }
+    [ProtoMember(13)] public string CompositionNote { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class InventoryVolumeListRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class InventoryVolumeListResponse
+{
+    [ProtoMember(1)] public List<InventoryVolumeSummary> Volumes { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class InventoryFileListRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public int Limit { get; set; } = 200;
+    [ProtoMember(3)] public int Offset { get; set; }
+}
+
+[ProtoContract]
+public sealed class InventoryFileListResponse
+{
+    [ProtoMember(1)] public List<InventoryFileSummary> Files { get; set; } = new();
+    [ProtoMember(2)] public int TotalCount { get; set; }
+}
+
+// ── Inventory summary DTOs ──────────────────────────────────────────────────
+
+[ProtoContract]
+public sealed class InventorySessionSummary
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public int FilesScanned { get; set; }
+    [ProtoMember(3)] public int DuplicateGroupCount { get; set; }
+    [ProtoMember(4)] public int RootCount { get; set; }
+    [ProtoMember(5)] public int VolumeCount { get; set; }
+    [ProtoMember(6)] public string CreatedUtc { get; set; } = string.Empty;
+
+    // ── Provenance (C-016) ──────────────────────────────────────────────────
+    [ProtoMember(7)] public string Trigger { get; set; } = string.Empty;
+    [ProtoMember(8)] public string BuildMode { get; set; } = string.Empty;
+    [ProtoMember(9)] public string DeltaSource { get; set; } = string.Empty;
+    [ProtoMember(10)] public string BaselineSessionId { get; set; } = string.Empty;
+    [ProtoMember(11)] public bool IsTrusted { get; set; }
+    [ProtoMember(12)] public string CompositionNote { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class InventoryVolumeSummary
+{
+    [ProtoMember(1)] public string RootPath { get; set; } = string.Empty;
+    [ProtoMember(2)] public string DriveFormat { get; set; } = string.Empty;
+    [ProtoMember(3)] public string DriveType { get; set; } = string.Empty;
+    [ProtoMember(4)] public bool IsReady { get; set; }
+    [ProtoMember(5)] public long TotalSizeBytes { get; set; }
+    [ProtoMember(6)] public long FreeSpaceBytes { get; set; }
+}
+
+[ProtoContract]
+public sealed class InventoryFileSummary
+{
+    [ProtoMember(1)] public string Path { get; set; } = string.Empty;
+    [ProtoMember(2)] public string Name { get; set; } = string.Empty;
+    [ProtoMember(3)] public string Extension { get; set; } = string.Empty;
+    [ProtoMember(4)] public string Category { get; set; } = string.Empty;
+    [ProtoMember(5)] public long SizeBytes { get; set; }
+    [ProtoMember(6)] public long LastModifiedUnixTimeSeconds { get; set; }
+    [ProtoMember(7)] public SensitivityLevel Sensitivity { get; set; }
+    [ProtoMember(8)] public bool IsSyncManaged { get; set; }
+    [ProtoMember(9)] public bool IsDuplicateCandidate { get; set; }
+}
+
+// ── Scan drift / diff contracts (C-013) ─────────────────────────────────────
+
+[ProtoContract]
+public sealed class DriftSnapshotRequest { }
+
+[ProtoContract]
+public sealed class DriftSnapshotResponse
+{
+    [ProtoMember(1)] public bool HasBaseline { get; set; }
+    [ProtoMember(2)] public string OlderSessionId { get; set; } = string.Empty;
+    [ProtoMember(3)] public string NewerSessionId { get; set; } = string.Empty;
+    [ProtoMember(4)] public int AddedCount { get; set; }
+    [ProtoMember(5)] public int RemovedCount { get; set; }
+    [ProtoMember(6)] public int ChangedCount { get; set; }
+    [ProtoMember(7)] public int UnchangedCount { get; set; }
+    [ProtoMember(8)] public string OlderCreatedUtc { get; set; } = string.Empty;
+    [ProtoMember(9)] public string NewerCreatedUtc { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class SessionDiffRequest
+{
+    [ProtoMember(1)] public string OlderSessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string NewerSessionId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class SessionDiffResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string OlderSessionId { get; set; } = string.Empty;
+    [ProtoMember(3)] public string NewerSessionId { get; set; } = string.Empty;
+    [ProtoMember(4)] public int AddedCount { get; set; }
+    [ProtoMember(5)] public int RemovedCount { get; set; }
+    [ProtoMember(6)] public int ChangedCount { get; set; }
+    [ProtoMember(7)] public int UnchangedCount { get; set; }
+}
+
+[ProtoContract]
+public sealed class SessionDiffFilesRequest
+{
+    [ProtoMember(1)] public string OlderSessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string NewerSessionId { get; set; } = string.Empty;
+    [ProtoMember(3)] public int Limit { get; set; } = 200;
+    [ProtoMember(4)] public int Offset { get; set; }
+}
+
+[ProtoContract]
+public sealed class SessionDiffFilesResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public List<DiffFileSummary> Files { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class DiffFileSummary
+{
+    [ProtoMember(1)] public string Path { get; set; } = string.Empty;
+    [ProtoMember(2)] public string ChangeKind { get; set; } = string.Empty;
+    [ProtoMember(3)] public long OlderSizeBytes { get; set; }
+    [ProtoMember(4)] public long NewerSizeBytes { get; set; }
+    [ProtoMember(5)] public long OlderLastModifiedUnix { get; set; }
+    [ProtoMember(6)] public long NewerLastModifiedUnix { get; set; }
+}

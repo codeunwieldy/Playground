@@ -17,6 +17,9 @@ public sealed partial class DashboardPage : Page
     private async void OnRunScanClick(object sender, RoutedEventArgs e) =>
         await Session.RunScanAsync();
 
+    private async void OnRefreshHistoryClick(object sender, RoutedEventArgs e) =>
+        await Session.RefreshHistoryAsync();
+
     private async void OnAnalyzeOptimizationClick(object sender, RoutedEventArgs e) =>
         await Session.AnalyzeOptimizationAsync();
 }

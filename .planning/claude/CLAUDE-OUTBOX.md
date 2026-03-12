@@ -14,6 +14,458 @@ For each update, include:
 
 ## Current Updates
 
+### C-017 Incremental Composition Activation
+
+- Task ID: C-017
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Scanning/IDeltaSource.cs`
+  - `src/Atlas.Core/Scanning/DeltaResult.cs`
+  - `src/Atlas.Core/Scanning/DeltaCapability.cs`
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs`
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs`
+  - `src/Atlas.Service/Services/DeltaSources/DeltaCapabilityDetector.cs`
+  - `src/Atlas.Service/Services/DeltaSources/UsnJournalDeltaSource.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `.planning/claude/C-015-INCREMENTAL-SESSION-COMPOSITION.md`
+  - `.planning/claude/C-016-INCREMENTAL-PROVENANCE-QUERY-APIS.md`
+  - `.planning/claude/C-017-INCREMENTAL-COMPOSITION-ACTIVATION.md`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs`
+- Files changed:
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs` — added `MaxIncrementalPaths` safety cap (default 500)
+  - `src/Atlas.Service/Services/FileScanner.cs` — added `SnapshotVolumes()` (extracted drive enumeration to reusable static method) and `InspectFile()` (single-file inspection with policy/safety classification)
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs` — replaced `RunRescanForRootAsync` with incremental composition decision tree: `TryIncrementalCompositionAsync`, `FindBaselineSessionForRootAsync`, `RunFullRescanAsync`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs` — added `StubDeltaSource` test helper and 6 new tests
+
+#### When Atlas now emits `IncrementalComposition`
+
+Atlas emits `BuildMode=IncrementalComposition` when ALL of:
+1. `deltaResult.RequiresFullRescan == false`
+2. `deltaResult.ChangedPaths.Count > 0`
+3. `deltaResult.ChangedPaths.Count <= MaxIncrementalPaths` (default 500)
+4. A baseline session exists for the root with file count > 0
+
+Composition logic: loads baseline files into a dictionary, re-inspects each changed path (upsert if exists, remove if deleted), gets fresh volume snapshots, persists as a complete session.
+
+#### Fallback cases and provenance
+
+| Scenario | BuildMode | IsTrusted | CompositionNote |
+|---|---|---|---|
+| Bounded delta + valid baseline | `IncrementalComposition` | `true` | Composition details (baseline ID, delta count, updated/removed counts) |
+| No baseline session exists | `FullRescan` | `true` | "No baseline session found for this root; full rescan required." |
+| Baseline has 0 files | `FullRescan` | `true` | "Baseline session {id} has no files; full rescan required." |
+| Delta count > MaxIncrementalPaths | `FullRescan` | `true` | "Delta path count (N) exceeds MaxIncrementalPaths (M); full rescan required." |
+| RequiresFullRescan=true | `FullRescan` | `true` | "Delta source requires full rescan: {reason}" |
+| No specific changed paths | `FullRescan` | `true` | "Delta reported changes but no specific paths; full rescan." |
+| Composition throws exception | `FullRescan` | `true` | "Full rescan fallback." |
+
+`IsTrusted` stays `true` across all cases — either a complete incremental result is produced, or the system falls back entirely to a full rescan. Partial results are never persisted.
+
+#### Tests added (6 new, all passing)
+
+1. `ServiceOptions_MaxIncrementalPaths_HasReasonableDefault` — verifies default of 500
+2. `Orchestration_IncrementalComposition_WhenBoundedDelta` — baseline + incremental → `IncrementalComposition`, `BaselineSessionId` populated
+3. `Orchestration_IncrementalComposition_SetsCorrectFileCount` — 3 baseline + 1 added = 4 files
+4. `Orchestration_IncrementalComposition_HandlesDeletedFiles` — 2 baseline, delete 1 = 1 file
+5. `Orchestration_FallsBackToFullRescan_WhenNoBaseline` — no prior session → `FullRescan` with baseline note
+6. `Orchestration_FallsBackToFullRescan_WhenDeltaExceedsMaxPaths` — 3 paths with cap=2 → `FullRescan` with overflow note
+
+All 33 service tests and 127 storage tests pass. No UI files touched.
+
+### C-016 Incremental Provenance Query APIs
+
+- Task ID: C-016
+- Status: **done**
+- Files read:
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+  - `.planning/claude/C-011-INVENTORY-QUERY-APIS.md`
+  - `.planning/claude/C-013-SCAN-DIFF-AND-DRIFT-QUERY-APIS.md`
+  - `.planning/claude/C-015-INCREMENTAL-SESSION-COMPOSITION.md`
+  - `.planning/claude/C-016-INCREMENTAL-PROVENANCE-QUERY-APIS.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+  - `spec/HANDOFF.md`
+  - `tests/Atlas.Storage.Tests/InventoryQueryTests.cs`
+  - `tests/Atlas.Storage.Tests/InventoryRepositoryTests.cs`
+  - `tests/Atlas.Storage.Tests/TestDatabaseFixture.cs`
+  - `src/Atlas.Core/Scanning/DeltaCapability.cs`
+  - `src/Atlas.Core/Scanning/DeltaResult.cs`
+- Files changed:
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added idempotent additive column migrations for 6 provenance columns on `scan_sessions` (trigger, build_mode, delta_source, baseline_session_id, is_trusted, composition_note); bootstrapper now handles duplicate-column errors safely for existing databases
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs` — added 6 provenance fields to `ScanSession` model (Trigger, BuildMode, DeltaSource, BaselineSessionId, IsTrusted, CompositionNote); extended `ScanSessionSummary` record with matching optional parameters
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs` — updated `SaveSessionAsync` INSERT to persist provenance columns; updated `GetSessionAsync` and `ListSessionsAsync` SELECT queries to read provenance columns and map them to `ScanSessionSummary`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added 6 provenance fields (ProtoMember 8-13) to `InventorySnapshotResponse`, `InventorySessionDetailResponse`, and `InventorySessionSummary` (ProtoMember 7-12)
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — updated 3 handlers (`HandleInventorySnapshotAsync`, `HandleInventorySessionsAsync`, `HandleInventorySessionDetailAsync`) to flow provenance through pipe; updated `HandleScanAsync` to set explicit Manual/FullRescan provenance on pipe-triggered sessions
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs` — updated `RunRescanForRootAsync` to accept `DeltaResult` and tag orchestration sessions with Trigger=Orchestration, BuildMode=FullRescan, and DeltaSource from the detected capability
+  - `tests/Atlas.Storage.Tests/ProvenanceQueryTests.cs` — new file with 10 focused provenance tests
+
+#### Exact provenance fields now queryable by Codex
+
+| Field | Type | Description | Default |
+|---|---|---|---|
+| `Trigger` | string | `Manual` or `Orchestration` | `Manual` |
+| `BuildMode` | string | `FullRescan` or `IncrementalComposition` | `FullRescan` |
+| `DeltaSource` | string | `UsnJournal`, `Watcher`, `ScheduledRescan`, or empty | `""` |
+| `BaselineSessionId` | string | ID of the baseline session used during composition, or empty | `""` |
+| `IsTrusted` | bool | Whether Atlas trusts this as a complete session result | `true` |
+| `CompositionNote` | string | Freeform note about composition/fallback/degradation | `""` |
+
+#### Exposure approach
+
+Provenance was exposed via **additive fields on existing contracts**. No new pipe routes were needed. The 3 existing inventory read routes now carry provenance:
+
+- `inventory/snapshot` → `InventorySnapshotResponse` (fields 8-13)
+- `inventory/sessions` → `InventorySessionSummary` (fields 7-12)
+- `inventory/session-detail` → `InventorySessionDetailResponse` (fields 8-13)
+
+All fields use safe protobuf-additive numbering. Older clients that don't read the new fields will silently ignore them.
+
+#### What still remains deferred
+
+- **Actual incremental session composition**: The orchestration worker currently always does full rescans and tags sessions accordingly. When C-015's incremental composition logic is fully integrated, sessions will start appearing with `BuildMode=IncrementalComposition` and populated `BaselineSessionId`/`DeltaSource`/`CompositionNote` fields. The read path is ready for that today.
+- **Composition trust scoring**: `IsTrusted` is always `true` for now. When the orchestrator gains fallback-to-full-rescan degradation paths, untrusted sessions with explanatory `CompositionNote` will appear.
+
+#### Tests added
+
+10 new tests in `tests/Atlas.Storage.Tests/ProvenanceQueryTests.cs`:
+
+1. `Snapshot_IncludesProvenance_ForLatestSession` — verifies all 6 provenance fields on latest snapshot
+2. `SessionList_ReturnsProvenanceSummary` — verifies provenance on session list items
+3. `SessionDetail_ReturnsBaselineLineage_WhenCompositionUsedOne` — verifies baseline linkage round-trip
+4. `FullRescanSession_ReportsClearNonIncrementalProvenance` — verifies clean non-incremental defaults
+5. `MissingSession_ReturnsNull` — typed missing-session behavior
+6. `EmptyDatabase_SnapshotReturnsNull` — clean empty-state behavior
+7. `EmptyDatabase_SessionList_ReturnsEmpty` — clean empty-state behavior
+8. `UntrustedSession_ProvenanceRoundTrips` — untrusted session with composition note
+9. `DefaultProvenance_ManualFullRescan` — legacy-style sessions get correct defaults
+10. `InventorySessionSummaryDto_MapsAllProvenanceFields` — full DTO mapping verification
+
+All 370 tests pass (121 Core + 57 AI + 127 Storage + 65 Service).
+
+### C-014 Actual USN Journal Integration
+
+- Task ID: C-014
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Scanning/IDeltaSource.cs`
+  - `src/Atlas.Core/Scanning/DeltaCapability.cs`
+  - `src/Atlas.Core/Scanning/DeltaResult.cs`
+  - `src/Atlas.Service/Services/DeltaSources/UsnJournalDeltaSource.cs` (original stub)
+  - `src/Atlas.Service/Services/DeltaSources/DeltaCapabilityDetector.cs`
+  - `src/Atlas.Service/Services/DeltaSources/FileSystemWatcherDeltaSource.cs`
+  - `src/Atlas.Service/Services/DeltaSources/ScheduledRescanDeltaSource.cs`
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs`
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs`
+  - `src/Atlas.Service/Program.cs`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs`
+  - `.planning/claude/C-012-DELTA-SCANNING-AND-RESCAN-ORCHESTRATION.md`
+  - `.planning/claude/C-013-SCAN-DIFF-AND-DRIFT-QUERY-APIS.md`
+  - `.planning/claude/C-014-ACTUAL-USN-JOURNAL-INTEGRATION.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+- Files changed:
+  - `src/Atlas.Service/Services/DeltaSources/UsnJournalDeltaSource.cs` — replaced stub with real journal-backed implementation; fixed namespace from `Atlas.Core.Scanning` to `Atlas.Service.Services.DeltaSources`; added constructor dependencies on `IUsnJournalReader`, `IUsnCheckpointRepository`, and `ILogger`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added `usn_checkpoints` table to schema
+  - `src/Atlas.Service/Program.cs` — registered `IUsnJournalReader`/`UsnJournalReader` and `IUsnCheckpointRepository`/`UsnCheckpointRepository`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs` — updated existing tests with test stubs for new constructor; added `NullUsnJournalReader`, `InMemoryUsnCheckpointRepository`, and `MockUsnJournalReader` test helpers
+- Files created:
+  - `src/Atlas.Service/Services/DeltaSources/Interop/UsnJournalInterop.cs` — P/Invoke declarations for `CreateFileW`, `DeviceIoControl` (2 overloads), `OpenFileById`, `GetFinalPathNameByHandleW`; native structs (`USN_JOURNAL_DATA_V1`, `READ_USN_JOURNAL_DATA_V0`, `FILE_ID_DESCRIPTOR`); IOCTL constants and USN_RECORD_V2 field offset documentation
+  - `src/Atlas.Service/Services/DeltaSources/UsnJournalReader.cs` — `IUsnJournalReader` interface + `UsnJournalReader` implementation with volume handle management, bounded record reading loop (64KB buffer, 200K record cap), path resolution via `OpenFileById`/`GetFinalPathNameByHandle` with parent-directory cache, root-path filtering, and overflow detection
+  - `src/Atlas.Storage/Repositories/IUsnCheckpointRepository.cs` — interface + `UsnCheckpoint` model for per-volume journal checkpoints
+  - `src/Atlas.Storage/Repositories/UsnCheckpointRepository.cs` — SQLite-backed CRUD implementation
+  - `tests/Atlas.Service.Tests/UsnJournalDeltaSourceTests.cs` — 11 focused tests with mocked reader
+- What is now truly USN-backed:
+  - `UsnJournalDeltaSource.IsAvailableForRootAsync` now probes actual journal access (NTFS check + `QueryJournal`), not just filesystem type
+  - `UsnJournalDeltaSource.DetectChangesAsync` reads the USN change journal on supported NTFS volumes, returns bounded `ChangedPaths` when under 50K, and degrades safely to `RequiresFullRescan` on overflow, unresolvable records, journal reset, or read failure
+  - Per-volume checkpoints are persisted in SQLite so the service resumes from the last-read USN between restarts
+- What state is persisted:
+  - `usn_checkpoints` table: `volume_id` (PK), `journal_id`, `last_usn`, `updated_utc`
+  - One row per monitored volume; updated on each successful detection cycle
+- What still remains deferred:
+  - `RescanOrchestrationWorker` still runs full rescans even when `ChangedPaths` are available (incremental partial-rescan optimization is a future packet)
+  - No Watcher-to-USN promotion at runtime (if USN becomes available mid-session)
+  - No UI consumption of USN-specific signals
+- Tests added and whether they pass:
+  - 11 new tests in `UsnJournalDeltaSourceTests`: first-run baseline, journal ID change, journal wrap, no changes, changes under cap, overflow, unresolvable records, read failure (checkpoint not advanced), changes filtered by root, journal unavailable, fallback chain integration — **all 11 pass**
+  - All 65 service tests pass (including updated existing delta scanning tests)
+  - All 117 storage tests pass
+  - Full solution builds with 0 errors
+- No UI files were touched
+
+### C-013 Scan Diff and Drift Query APIs
+
+- Task ID: C-013
+- Status: **done**
+- Files read:
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `tests/Atlas.Storage.Tests/InventoryQueryTests.cs`
+  - `tests/Atlas.Storage.Tests/InventoryRepositoryTests.cs`
+  - `tests/Atlas.Storage.Tests/TestDatabaseFixture.cs`
+  - `.planning/claude/C-013-SCAN-DIFF-AND-DRIFT-QUERY-APIS.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+  - `spec/HANDOFF.md`
+- Files changed:
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs` — added `DiffSessionsAsync`, `GetDiffFilesAsync` interface methods + `SessionDiffSummary` and `SessionDiffFile` record types
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs` — implemented `DiffSessionsAsync` and `GetDiffFilesAsync` with SQLite-compatible UNION ALL diff queries
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added 3 request/response contract pairs and 1 summary DTO type for scan drift
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added 3 read-only drift route handlers + 3 routes in `RouteAsync`
+  - `Atlas.sln` — added missing `Atlas.Storage.Tests` project reference
+- Files created:
+  - `tests/Atlas.Storage.Tests/ScanDriftTests.cs` — 18 new tests
+- New message types added:
+  - `inventory/drift-snapshot` → `inventory/drift-snapshot-response` (latest-vs-previous drift summary)
+  - `inventory/session-diff` → `inventory/session-diff-response` (explicit session-vs-session diff with counts)
+  - `inventory/session-diff-files` → `inventory/session-diff-files-response` (bounded changed file rows for drill-in)
+- New contracts:
+  - Requests: `DriftSnapshotRequest`, `SessionDiffRequest`, `SessionDiffFilesRequest`
+  - Responses: `DriftSnapshotResponse`, `SessionDiffResponse`, `SessionDiffFilesResponse`
+  - DTOs: `DiffFileSummary`
+- New repository methods:
+  - `IInventoryRepository.DiffSessionsAsync(olderSessionId, newerSessionId)` — returns `SessionDiffSummary` with added/removed/changed/unchanged counts
+  - `IInventoryRepository.GetDiffFilesAsync(olderSessionId, newerSessionId, limit, offset)` — returns bounded `SessionDiffFile` rows ordered by path
+
+#### Diff semantics (first-pass definition)
+
+- **Added**: path exists in newer session but not in older session
+- **Removed**: path exists in older session but not in newer session
+- **Changed**: path exists in both sessions but `size_bytes` or `last_modified_unix` differ
+- **Unchanged**: same path with identical `size_bytes` and `last_modified_unix`
+
+This definition is path-stable: a file that moved from one location to another appears as Removed + Added (no rename tracking). This is intentional for safety and simplicity.
+
+#### What drift the app can now query
+
+- **Drift snapshot** (`inventory/drift-snapshot`): zero-argument request that auto-selects the two most recent scan sessions. Returns `HasBaseline=false` when fewer than two sessions exist. Otherwise returns added/removed/changed/unchanged counts plus both session IDs and timestamps.
+- **Explicit session diff** (`inventory/session-diff`): compare any two session IDs. Returns `Found=false` if either session is missing. Otherwise returns full diff counts.
+- **Diff file rows** (`inventory/session-diff-files`): bounded, paginated (limit: 1-500) changed file rows for review. Returns ChangeKind (Added/Removed/Changed) and size+timestamp for both sessions. Ordered deterministically by path.
+
+#### Handler design notes
+
+- All handlers are read-only, no mutations
+- Drift snapshot fetches the two most recent sessions via `ListSessionsAsync(2, 0)` — no client-side session ID management needed
+- Explicit diff and diff-files handlers validate both session IDs exist before computing diff
+- File-level diff rows bounded by `Math.Clamp` (1-500)
+- Empty databases and missing sessions return clean typed responses (`HasBaseline=false`, `Found=false`, empty lists)
+- Nullable older/newer fields in `SessionDiffFile` are mapped to `0` in the protobuf DTO for transport safety
+
+#### Tests added (18 new tests, all passing)
+
+| Category | Count | Tests |
+|----------|-------|-------|
+| Diff counts - identical sessions | 1 | All unchanged |
+| Diff counts - added file | 1 | Added count correct |
+| Diff counts - removed file | 1 | Removed count correct |
+| Diff counts - changed (size) | 1 | Changed when size differs |
+| Diff counts - changed (modified) | 1 | Changed when last_modified differs |
+| Diff counts - mixed | 1 | Added + removed + changed + unchanged all correct |
+| Diff counts - empty sessions | 1 | Two empty sessions → all zeros |
+| Diff counts - missing sessions | 1 | Nonexistent session IDs → all zeros |
+| Diff files - added/removed/changed rows | 1 | Returns correct rows, excludes unchanged |
+| Diff files - ordering | 1 | Ordered by path deterministically |
+| Diff files - pagination | 1 | Respects limit and offset |
+| Diff files - identical sessions | 1 | Returns empty (no changed rows) |
+| Diff files - missing sessions | 1 | Returns empty |
+| Drift snapshot - fewer than 2 sessions | 1 | No baseline available |
+| Drift snapshot - two sessions | 1 | Produces correct diff |
+| DTO mapping - DiffFileSummary | 1 | Maps correctly from SessionDiffFile |
+| DTO mapping - DriftSnapshotResponse | 1 | Maps correctly from diff summary + sessions |
+| Handler logic - missing session response | 1 | Returns Found=false |
+
+#### Build status
+- **Build**: 0 errors, 0 warnings
+- **Core Tests**: 121 passed
+- **AI Tests**: 57 passed
+- **Storage Tests**: 117 passed (99 existing + 18 new)
+- **Service Tests**: 54 passed
+- **Total**: 349 tests passing
+
+#### No UI files touched
+- Zero changes in `src/Atlas.App/**`
+
+#### Intentionally deferred
+- Rename/move tracking across sessions (current diff uses path identity only — moved files show as Removed + Added)
+- Content-hash-based diffing (would need fingerprint column in file_snapshots; path + size + modified is sufficient for first pass)
+- Total diff file count endpoint (would need a COUNT query variant of the diff; pagination is available via bounded limit+offset)
+- Drift retention/cleanup (old sessions and their diff data grow without pruning)
+- Async bulk diff for very large sessions (current SQLite query is synchronous per call; may need streaming for 100K+ file sessions)
+
+---
+
+### C-012 Delta Scanning and Rescan Orchestration
+
+- Task ID: C-012
+- Status: **done**
+- Files read:
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/AtlasStartupWorker.cs`
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+  - `src/Atlas.Service/Program.cs`
+  - `.planning/claude/C-010-INVENTORY-PERSISTENCE-FOUNDATIONS.md`
+  - `.planning/claude/C-011-INVENTORY-QUERY-APIS.md`
+  - `.planning/claude/C-012-DELTA-SCANNING-AND-RESCAN-ORCHESTRATION.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+- Files created:
+  - `src/Atlas.Core/Scanning/DeltaCapability.cs` — capability enum (None, ScheduledRescan, Watcher, UsnJournal)
+  - `src/Atlas.Core/Scanning/DeltaResult.cs` — result model for delta detection
+  - `src/Atlas.Core/Scanning/IDeltaSource.cs` — delta source interface (Capability, IsAvailableForRootAsync, DetectChangesAsync)
+  - `src/Atlas.Service/Services/DeltaSources/UsnJournalDeltaSource.cs` — USN journal seam (probes NTFS, defers actual reading)
+  - `src/Atlas.Service/Services/DeltaSources/FileSystemWatcherDeltaSource.cs` — watcher fallback with overflow handling
+  - `src/Atlas.Service/Services/DeltaSources/ScheduledRescanDeltaSource.cs` — always-full-rescan fallback
+  - `src/Atlas.Service/Services/DeltaSources/DeltaCapabilityDetector.cs` — probes all sources, returns best available
+  - `src/Atlas.Service/Services/RescanOrchestrationWorker.cs` — bounded background worker for incremental rescans
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs` — 27 new tests
+- Files modified:
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs` — added EnableRescanOrchestration, RescanInterval, MaxRootsPerCycle, OrchestrationCooldown
+  - `src/Atlas.Service/Program.cs` — registered IDeltaSource implementations, DeltaCapabilityDetector, RescanOrchestrationWorker
+
+#### New abstractions added
+
+**1. Delta-source capability model (Atlas.Core.Scanning)**
+- `DeltaCapability` enum: None < ScheduledRescan < Watcher < UsnJournal (ordered by preference)
+- `DeltaResult`: root path, capability used, hasChanges, changedPaths, requiresFullRescan, reason
+- `IDeltaSource` interface: Capability property, IsAvailableForRootAsync, DetectChangesAsync
+
+**2. Delta source implementations (Atlas.Service.Services.DeltaSources)**
+- `UsnJournalDeltaSource`: probes NTFS volumes, currently defers USN reading (returns RequiresFullRescan=true). The seam is ready for actual USN journal integration.
+- `FileSystemWatcherDeltaSource`: starts FileSystemWatcher per root, tracks changed paths, handles buffer overflow gracefully. 64KB buffer, 10K path cap before overflow.
+- `ScheduledRescanDeltaSource`: always available for existing roots, always returns RequiresFullRescan=true. Pure fallback.
+- `DeltaCapabilityDetector`: probes all registered sources in descending priority order, returns best available. Also provides ProbeRootAsync for diagnostics.
+
+**3. Rescan orchestration (Atlas.Service.Services.RescanOrchestrationWorker)**
+- BackgroundService that runs on a configurable cooldown cycle
+- Disabled by default (EnableRescanOrchestration = false)
+- Per-cycle behavior: iterates configured roots, detects best delta source, checks rescan interval, triggers bounded rescans
+- Respects MaxRootsPerCycle to prevent unbounded work
+- Persists scan sessions through the existing IInventoryRepository.SaveSessionAsync path
+- 10-second startup delay to let the database initialize
+- Graceful shutdown on cancellation
+
+**4. Service options additions**
+- `EnableRescanOrchestration` (default: false) — must be explicitly enabled
+- `RescanInterval` (default: 30 min) — minimum time between rescans of the same root
+- `MaxRootsPerCycle` (default: 5) — cap on roots scanned per orchestration cycle
+- `OrchestrationCooldown` (default: 5 min) — delay between cycles
+
+#### What "delta-ready" means after this packet
+- Atlas has a clear backend seam (IDeltaSource) for incremental scan observation
+- Three delta sources are registered and probed in priority order
+- USN journal probe identifies NTFS-capable volumes; actual reading is deferred
+- FileSystemWatcher provides near-realtime change detection on local drives
+- Unsupported roots degrade to safe bounded rescans via ScheduledRescanDeltaSource
+- All rescans persist normal scan sessions through the existing inventory repository
+- Orchestration is bounded by interval, per-cycle root cap, and cooldown
+- No UI files were touched; no service boundary was weakened
+
+#### What still remains deferred
+- Actual USN journal reading (requires P/Invoke for DeviceIoControl; the seam and probe are ready)
+- Delta-aware partial rescans (only rescanning changed paths instead of full root walk)
+- Session diffing between scan sessions (comparing file_snapshots across two sessions)
+- "What changed" query APIs for the app to consume
+- Watcher lifecycle management for root additions/removals at runtime
+- Retention/cleanup for orchestration-generated scan sessions
+- Config exposure via appsettings.json (options are wired but no JSON examples added)
+
+#### Tests added (27 new tests, all passing)
+
+| Category | Count | Tests |
+|----------|-------|-------|
+| Capability model | 2 | Priority ordering (USN > Watcher > Scheduled > None), DeltaResult defaults |
+| USN journal source | 3 | Non-existent root unavailable, detect returns full rescan, capability value |
+| Watcher source | 5 | Non-existent root unavailable, existing root available, first detection needs full rescan, quiet second detection no changes, file creation detected |
+| Scheduled rescan source | 4 | Existing root available, non-existent unavailable, always full rescan, capability value |
+| Capability detector | 5 | No sources returns null, prefers best available, falls back to scheduled, probe report completeness, non-existent root returns none |
+| Orchestration worker | 7 | Disabled by default no-op, cycle persists session, interval respected, max roots per cycle bounded, empty roots no-op, unresolvable root skipped, options defaults |
+
+#### Build status
+- **Build**: 0 errors, 0 warnings (excluding 4 pre-existing CA1416 in OptimizationScanner.cs)
+- **Core Tests**: 121 passed
+- **AI Tests**: 57 passed
+- **Service Tests**: 54 passed (27 existing + 27 new)
+- **Storage Tests**: 99 passed
+- **Total**: 331 tests passing
+
+#### No UI files touched
+- Zero changes in `src/Atlas.App/**`
+
+---
+
+### C-011 Inventory Query APIs
+
+- Task ID: C-011
+- Status: **done**
+- Files read:
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Program.cs`
+  - `tests/Atlas.Storage.Tests/InventoryRepositoryTests.cs`
+  - `tests/Atlas.Storage.Tests/HistoryQueryTests.cs`
+  - `.planning/claude/C-011-INVENTORY-QUERY-APIS.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+  - `spec/HANDOFF.md`
+- Files changed:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added 5 request/response contract pairs and 3 summary DTO types
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs` — added `GetSessionAsync` and `GetRootsForSessionAsync` interface methods
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs` — implemented `GetSessionAsync` and `GetRootsForSessionAsync`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added 5 read-only inventory route handlers + 5 routes in `RouteAsync`
+  - `tests/Atlas.Storage.Tests/InventoryQueryTests.cs` — new file, 23 tests
+- New message types added:
+  - `inventory/snapshot` → `inventory/snapshot-response` (latest session summary for dashboard)
+  - `inventory/sessions` → `inventory/sessions-response` (paginated session list, descending time order)
+  - `inventory/session-detail` → `inventory/session-detail-response` (session with roots and volume detail)
+  - `inventory/volumes` → `inventory/volumes-response` (volume snapshots for a session)
+  - `inventory/files` → `inventory/files-response` (paginated file snapshots with total count)
+- New contracts:
+  - Requests: `InventorySnapshotRequest`, `InventorySessionListRequest`, `InventorySessionDetailRequest`, `InventoryVolumeListRequest`, `InventoryFileListRequest`
+  - Responses: `InventorySnapshotResponse`, `InventorySessionListResponse`, `InventorySessionDetailResponse`, `InventoryVolumeListResponse`, `InventoryFileListResponse`
+  - DTOs: `InventorySessionSummary`, `InventoryVolumeSummary`, `InventoryFileSummary`
+- What inventory can now be queried:
+  - Latest scan session summary (session_id, files_scanned, duplicate_group_count, root_count, volume_count, created_utc)
+  - Recent scan sessions with pagination
+  - Session detail with root paths and volume summaries
+  - Volume snapshots for a given session (root_path, drive_format, drive_type, is_ready, total_size_bytes, free_space_bytes)
+  - Paginated file snapshots for a session (path, name, extension, category, size_bytes, last_modified, sensitivity, sync, duplicate flags) with total count
+  - All of the above through bounded read-only pipe contracts
+- Repository gap-fills:
+  - `GetSessionAsync(sessionId)` — direct session lookup by ID (avoids listing all sessions to find one)
+  - `GetRootsForSessionAsync(sessionId)` — returns root paths for a session, sorted by path
+- Tests: 23 new tests in `InventoryQueryTests.cs`, all passing. Cumulative: 99 storage tests, 304 total
+- Design notes:
+  - All handlers are read-only, no mutations
+  - Result sizes bounded by `Math.Clamp` (sessions: 1-200, files: 1-1000)
+  - Empty databases return clean empty responses (`HasSession = false` or empty lists)
+  - Missing session detail returns `Found = false`
+  - Timestamps serialized as ISO-8601 strings for safe protobuf transport
+  - `InventorySnapshotResponse` uses a boolean `HasSession` flag for clean empty-state handling
+  - File list response includes `TotalCount` for pagination support
+- Intentionally deferred:
+  - Session deletion and retention policies
+  - Full-text search across file snapshots
+  - Delta scanning queries (diffing file_snapshots between sessions)
+  - File snapshot detail endpoint (full FileInventoryItem with content fingerprint and mime type)
+  - These can be added as narrow follow-up packets when needed
+- No `src/Atlas.App/**` files were touched
+
+---
+
 ### C-001 Phase 1 Safety Audit
 - Status: `done`
 - Started: 2026-03-11
@@ -487,3 +939,121 @@ For each update, include:
   2. Add ServiceInstall to WiX Product.wxs
   3. Harvest all deployment files from publish output
   4. Add MajorUpgrade element
+
+---
+
+## C-008 Persisted History and Query APIs
+
+- Task ID: C-008
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Storage/Repositories/IPlanRepository.cs`
+  - `src/Atlas.Storage/Repositories/IRecoveryRepository.cs`
+  - `src/Atlas.Storage/Repositories/IOptimizationRepository.cs`
+  - `src/Atlas.Storage/Repositories/IConversationRepository.cs`
+  - `src/Atlas.Storage/Repositories/PlanRepository.cs`
+  - `.planning/claude/C-008-HISTORY-QUERY-APIS.md`
+  - `.planning/claude/C-008-CODEX-TARGET.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+- Files changed:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added 7 request/response contract pairs and 5 summary DTO types
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added 7 read-only route handlers + 7 routes in `RouteAsync`
+  - `tests/Atlas.Storage.Tests/HistoryQueryTests.cs` — new file, 20 tests
+- New message types added:
+  - `history/snapshot` → `history/snapshot-response` (compact all-domain snapshot)
+  - `history/plans` → `history/plans-response` (paginated plan summaries)
+  - `history/plan-detail` → `history/plan-detail-response` (full plan graph + linked batches)
+  - `history/checkpoints` → `history/checkpoints-response` (paginated checkpoint summaries)
+  - `history/quarantine` → `history/quarantine-response` (paginated quarantine summaries)
+  - `history/findings` → `history/findings-response` (paginated finding summaries)
+  - `history/traces` → `history/traces-response` (paginated prompt-trace summaries, filterable by stage)
+- New contracts:
+  - Requests: `HistorySnapshotRequest`, `HistoryListRequest`, `HistoryPlanDetailRequest`
+  - Responses: `HistorySnapshotResponse`, `HistoryPlanListResponse`, `HistoryPlanDetailResponse`, `HistoryCheckpointListResponse`, `HistoryQuarantineListResponse`, `HistoryFindingListResponse`, `HistoryTraceListResponse`
+  - DTOs: `HistoryPlanSummary`, `HistoryCheckpointSummary`, `HistoryQuarantineSummary`, `HistoryFindingSummary`, `HistoryTraceSummary`
+- What history can now be queried:
+  - Recent plans (scope, summary, created timestamp)
+  - Plan detail (full PlanGraph + all batches for that plan)
+  - Recent undo checkpoints (batch link, operation count, created timestamp)
+  - Recent quarantine items (original path, reason, retention deadline)
+  - Recent optimization findings (kind, target, auto-fix eligibility)
+  - Recent prompt traces (stage, created timestamp; filterable by stage)
+  - All of the above in a single compact snapshot request
+- Tests: 20 new tests in `HistoryQueryTests.cs`, all passing. Cumulative: 62 storage tests, 27 service tests
+- Design notes:
+  - All handlers are read-only, no mutations
+  - Result sizes bounded by `Math.Clamp` (snapshot: 1-50, list: 1-200)
+  - Empty databases return clean empty lists
+  - Missing plan detail returns `Found = false`
+  - Timestamps serialized as ISO-8601 strings for safe protobuf transport
+  - No repository interface changes needed — existing `List*` methods were sufficient
+  - `HistoryListRequest` shared across all paginated routes (limit, offset, optional stage filter)
+- Intentionally deferred:
+  - Checkpoint detail endpoint (full UndoCheckpoint with inverse operations)
+  - Quarantine detail endpoint (full QuarantineItem with content hash)
+  - Finding detail endpoint (full OptimizationFinding with evidence + rollback plan)
+  - Prompt trace detail endpoint (full PromptTrace with prompt/response payloads)
+  - These can be added as narrow follow-up packets if Codex needs drill-in from the history workspace
+- No `src/Atlas.App/**` files were touched
+
+---
+
+## C-010 Inventory Persistence Foundations
+
+- Task ID: C-010
+- Status: **done**
+- Files read:
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+  - `src/Atlas.Service/Services/FileScanner.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Storage/Repositories/IPlanRepository.cs`
+  - `src/Atlas.Storage/Repositories/SqliteConnectionFactory.cs`
+  - `src/Atlas.Storage/AtlasJsonCompression.cs`
+  - `src/Atlas.Service/Program.cs`
+  - `.planning/claude/C-010-INVENTORY-PERSISTENCE-FOUNDATIONS.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+- Files changed:
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added 4 tables + 1 index for inventory domain
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs` — new file, interface + ScanSession model + ScanSessionSummary record
+  - `src/Atlas.Storage/Repositories/InventoryRepository.cs` — new file, full SQLite implementation
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added IInventoryRepository constructor param, scan persistence in HandleScanAsync
+  - `src/Atlas.Service/Program.cs` — registered IInventoryRepository DI binding
+  - `tests/Atlas.Storage.Tests/InventoryRepositoryTests.cs` — new file, 14 tests
+- Schema added:
+  - `scan_sessions` — session header (session_id PK, files_scanned, duplicate_group_count, created_utc)
+  - `scan_session_roots` — one-to-many roots per session (composite PK: session_id + root_path)
+  - `scan_volumes` — one-to-many volumes per session (composite PK: session_id + root_path)
+  - `file_snapshots` — individual file rows per session (composite PK: session_id + path)
+  - `idx_file_snapshots_session` — index on session_id for efficient session queries
+- Repository contracts added:
+  - `IInventoryRepository.SaveSessionAsync` — bulk-inserts session header, roots, volumes, and file rows in a single transaction
+  - `IInventoryRepository.GetLatestSessionAsync` — returns most recent session summary
+  - `IInventoryRepository.ListSessionsAsync` — paginated session summaries in descending time order, includes root and volume counts
+  - `IInventoryRepository.GetVolumesForSessionAsync` — returns volume snapshots for a session
+  - `IInventoryRepository.GetFilesForSessionAsync` — paginated file snapshots for a session
+  - `IInventoryRepository.GetFileCountForSessionAsync` — file count for a session
+- What scan state is now persisted:
+  - Every live scan through the pipe server persists a full scan session
+  - Session header with file count and duplicate group count
+  - All scanned root paths
+  - All volume snapshots (root path, format, type, capacity, free space)
+  - All file inventory items as individual queryable rows (path, name, extension, category, size, last modified, sensitivity, sync/duplicate flags)
+  - Persistence failure degrades gracefully — scan response is still returned to the app
+- Tests: 14 new tests in `InventoryRepositoryTests.cs`, all passing. Cumulative: 76 storage tests, 27 service tests
+- Design notes:
+  - File snapshots stored as individual rows (not compressed blobs) to support later delta scanning queries
+  - All writes happen in a single SQLite transaction for atomicity
+  - `ScanSessionSummary` includes derived counts (root_count, volume_count) via correlated subqueries
+  - File snapshots are ordered by path for deterministic pagination
+- Intentionally deferred:
+  - USN journal integration and watcher orchestration (separate packet per Codex instruction)
+  - Delta scanning logic (diffing file_snapshots between sessions)
+  - Inventory read-side pipe contracts for the app (analogous to C-008 history routes)
+  - Session deletion and retention policies
+  - Duplicate group persistence (currently only the count is stored, not the full group data)
+- No `src/Atlas.App/**` files were touched
