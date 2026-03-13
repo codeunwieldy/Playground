@@ -73,6 +73,54 @@ Use this file as the active assignment queue for Claude Code.
 
 ## Open Next
 
+### Parallel Wave
+
+**Status: complete** — All four packets claimed and delivered.
+
+- `C-032` plan-history lineage and source-aware queries — **done**
+- `C-033` recovery / VSS checkpoint eligibility foundations — **done**
+- `C-034` safe optimization fix execution and rollback — **done**
+- `C-035` conversation compaction and retention summaries — **done**
+
+See CLAUDE-OUTBOX.md for full deliverable details. 649 tests passing across all projects.
+
+### Next Parallel Wave
+
+**Status: complete** - All four packets claimed and delivered.
+
+- `C-036` actual VSS snapshot orchestration and persistence - **done**
+- `C-037` optimization execution history and rollback detail - **done**
+- `C-038` conversation compaction worker and retention orchestration - **done**
+- `C-039` conversation summary query APIs - **done**
+
+See `CLAUDE-OUTBOX.md` for full deliverable details.
+
+### Next Backend Wave
+
+**Status: complete** - `C-040` through `C-043` delivered.
+
+- `C-040` VSS checkpoint detail query APIs - **done**
+- `C-041` optimization execution history rollups - **done**
+- `C-042` safe optimization fix request APIs - **done**
+- `C-043` conversation summary snapshot integration - **done**
+
+### Next Claude Wave
+
+If Claude has subagents available, these packets can be split carefully:
+
+- `C-044` optimization execution history query APIs
+- `C-045` VSS restore request and fallback APIs
+- `C-046` optimization batch apply preview and session summary
+- `C-047` conversation summary filters and drill-in
+
+Parallel note:
+
+- `C-044` is the primary optimization query packet in this wave
+- `C-045` and `C-047` may each need pipe contracts, so serialize if those files would collide
+- `C-046` should build on the safe optimization request lane from `C-042`
+
+Claim them in `.planning/claude/CLAUDE-OUTBOX.md` and stay inside each packet's file boundaries.
+
 ### C-008 Persisted History and Query APIs Packet
 - Status: **complete** (read-only history/query routes, contracts, and tests landed)
 - Output: `.planning/claude/C-008-HISTORY-QUERY-APIS.md`
@@ -376,7 +424,7 @@ Use this file as the active assignment queue for Claude Code.
   - no UI ownership
 
 ### C-029 Duplicate Cleanup Plan Preview APIs Packet
-- Status: **ready**
+- Status: **complete** (deterministic retained-session duplicate cleanup plan preview landed)
 - Output: `.planning/claude/C-029-DUPLICATE-CLEANUP-PLAN-PREVIEW-APIS.md`
 - Focus:
   - read-only retained-session duplicate cleanup plan preview
@@ -388,4 +436,130 @@ Use this file as the active assignment queue for Claude Code.
   - keep existing Memory / Plan Review surfaces stable while backend duplicate planning grows
 - Boundaries:
   - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-030 Duplicate Cleanup Plan Materialization Packet
+- Status: **complete** (deterministic retained cleanup materialization landed)
+- Output: `.planning/claude/C-030-DUPLICATE-CLEANUP-PLAN-MATERIALIZATION.md`
+- Focus:
+  - deterministic read-only materialization of the retained duplicate cleanup plan preview into an app-ready review payload
+  - bounded grouped operations, rationale, rollback posture, and blocked/degraded reasons
+  - service and contract tests
+- Codex target:
+  - let the existing plan-review machinery consume retained duplicate cleanup review truth without rebuilding duplicate plan logic in the app
+  - keep existing Memory / Plan Review surfaces stable while backend duplicate-plan review deepens
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-031 Duplicate Cleanup Plan Promotion and Persistence Packet
+- Status: **complete** (explicit retained cleanup plan promotion into standard plan history landed)
+- Output: `.planning/claude/C-031-DUPLICATE-CLEANUP-PLAN-PROMOTION-AND-PERSISTENCE.md`
+- Focus:
+  - explicit promotion of a retained duplicate cleanup plan into standard saved-plan history
+  - reuse of `C-030` materialization core without turning the read-only route into a write-side route
+  - plan lineage truth, bounded blocked/degraded reasons, and service/repository tests
+- Codex target:
+  - let the existing shell move from in-memory retained cleanup review to later persisted retained-plan history without app-side persistence logic
+  - keep existing Memory / Plan Review surfaces stable while backend retained-plan lifecycle deepens
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-032 Plan History Lineage and Source Filters Packet
+- Status: **complete**
+- Output: `.planning/claude/C-032-PLAN-HISTORY-LINEAGE-AND-SOURCE-FILTERS.md`
+- Focus:
+  - persist truthful saved-plan lineage for promoted retained cleanup plans
+  - expose source-aware plan history summaries and optional bounded filters
+  - keep older plans readable while plan-history truth deepens
+- Codex target:
+  - let the current Memory / Plan Review surfaces distinguish promoted retained-cleanup plans from generic saved plans without app-side guesswork
+  - keep existing plan history UX stable while backend history truth deepens
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - no UI ownership
+
+### C-033 VSS Checkpoint Eligibility and Metadata Foundations Packet
+- Status: **complete**
+- Output: `.planning/claude/C-033-VSS-CHECKPOINT-ELIGIBILITY-AND-METADATA-FOUNDATIONS.md`
+- Focus:
+  - deterministic checkpoint eligibility for destructive batches
+  - additive recovery metadata and persistence truth
+  - execution-preflight seam for later VSS orchestration
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - avoid `PipeContracts.cs` / `AtlasPipeServerWorker.cs` unless truly necessary
+  - no UI ownership
+
+### C-034 Safe Optimization Fix Application and Rollback Packet
+- Status: **complete**
+- Output: `.planning/claude/C-034-SAFE-OPTIMIZATION-FIX-APPLICATION-AND-ROLLBACK.md`
+- Focus:
+  - deterministic safe optimization fix execution
+  - honest rollback semantics for safe fix kinds
+  - conservative service-side behavior and tests
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - avoid plan-history work
+  - no UI ownership
+
+### C-035 Conversation Compaction and Retention Summaries Packet
+- Status: **complete**
+- Output: `.planning/claude/C-035-CONVERSATION-COMPACTION-AND-RETENTION-SUMMARIES.md`
+- Focus:
+  - additive conversation-summary storage
+  - deterministic local-first compaction
+  - retention and backward-compatibility tests
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - avoid pipe-route churn unless truly necessary
+  - no UI ownership
+
+### C-036 Actual VSS Snapshot Orchestration and Persistence Packet
+- Status: **ready**
+- Output: `.planning/claude/C-036-ACTUAL-VSS-SNAPSHOT-ORCHESTRATION-AND-PERSISTENCE.md`
+- Focus:
+  - real VSS-backed snapshot creation for eligible batches
+  - truthful persistence of snapshot refs and coverage notes
+  - conservative fail-closed behavior for required checkpoints
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - avoid conversation files
+  - no UI ownership
+
+### C-037 Optimization Execution History and Rollback Details Packet
+- Status: **ready**
+- Output: `.planning/claude/C-037-OPTIMIZATION-EXECUTION-HISTORY-AND-ROLLBACK-DETAILS.md`
+- Focus:
+  - durable optimization execution history
+  - rollback-detail persistence for safe fix runs
+  - service/storage truth without new UI
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - avoid pipe-route churn
+  - no UI ownership
+
+### C-038 Conversation Compaction Worker and Retention Orchestration Packet
+- Status: **ready**
+- Output: `.planning/claude/C-038-CONVERSATION-COMPACTION-WORKER-AND-RETENTION-ORCHESTRATION.md`
+- Focus:
+  - background compaction worker
+  - service options and cadence
+  - bounded operational retention behavior
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - avoid pipe-route churn
+  - no UI ownership
+
+### C-039 Conversation Summary Query APIs Packet
+- Status: **ready**
+- Output: `.planning/claude/C-039-CONVERSATION-SUMMARY-QUERY-APIS.md`
+- Focus:
+  - bounded read routes for compacted conversation summaries
+  - empty-state and backward-compatibility behavior
+  - app-ready summary DTOs
+- Boundaries:
+  - no `src/Atlas.App/**`
+  - this is the only packet in the wave that should touch `PipeContracts.cs` / `AtlasPipeServerWorker.cs`
   - no UI ownership

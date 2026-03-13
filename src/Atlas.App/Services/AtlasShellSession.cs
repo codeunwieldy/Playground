@@ -75,6 +75,11 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     private OptimizationResponse currentOptimization = new();
     private UndoCheckpoint latestCheckpoint = new();
     private HistorySnapshotResponse persistedHistory = new();
+    private ConversationSummaryListResponse persistedConversationSummaries = new();
+    private ConversationSummaryDetailResponse persistedConversationDetail = new();
+    private ConversationSummarySnapshotResponse persistedConversationSnapshot = new();
+    private CheckpointDetailResponse persistedCheckpointDetail = new();
+    private OptimizationFixPreviewResponse optimizationFixPreview = new();
     private InventorySnapshotResponse persistedInventorySnapshot = new();
     private InventorySessionListResponse persistedInventorySessions = new();
     private InventorySessionDetailResponse persistedInventoryDetail = new();
@@ -84,6 +89,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     private DuplicateActionReviewResponse persistedDuplicateActionReview = new();
     private DuplicateCleanupPreviewResponse persistedDuplicateCleanupPreview = new();
     private DuplicateCleanupBatchPreviewResponse persistedDuplicateCleanupBatchPreview = new();
+    private DuplicateCleanupPlanPreviewResponse persistedDuplicateCleanupPlanPreview = new();
+    private MaterializeDuplicateCleanupPlanResponse persistedDuplicateMaterializedPlan = new();
+    private PromoteDuplicateCleanupPlanResponse persistedDuplicatePromotedPlan = new();
     private FileInspectionResponse liveFileInspection = new();
     private SessionFileDetailResponse persistedFileDetail = new();
     private DriftSnapshotResponse persistedDriftSnapshot = new();
@@ -130,6 +138,11 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     private string persistedPlanSummaryText = "Stored plan drafts will appear here once the service-backed history lane is available.";
     private string persistedFindingSummaryText = "Stored optimization findings will appear here once Atlas refreshes service memory.";
     private string persistedTraceSummaryText = "Stored planning and voice traces will appear here once the service-backed history lane is online.";
+    private string persistedConversationSummaryText = "Stored conversation summaries will appear here once the service can answer compaction-history queries.";
+    private string conversationSummarySnapshotText = "Conversation compaction rollups will appear here once the service exposes aggregate summary memory.";
+    private string checkpointDetailSummaryText = "Checkpoint detail will appear here once Atlas can inspect one retained recovery checkpoint more deeply.";
+    private string optimizationFixSummaryText = "Safe fix control will appear here once Atlas has live optimization findings to preview or execute.";
+    private string lastOptimizationExecutionRecordId = string.Empty;
     private bool isBusy;
     private bool isLiveMode;
     private bool isInitialized;
@@ -204,6 +217,8 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     public ObservableCollection<AtlasStoredMemoryCard> PersistedFindingMemory { get; } = new();
 
     public ObservableCollection<AtlasStoredMemoryCard> PersistedTraceMemory { get; } = new();
+
+    public ObservableCollection<AtlasStoredMemoryCard> PersistedConversationMemory { get; } = new();
 
     public ObservableCollection<AtlasStoredMemoryCard> PersistedScanSessionMemory { get; } = new();
 
@@ -475,9 +490,37 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         private set => SetProperty(ref persistedTraceSummaryText, value);
     }
 
-    public string UndoNotesText => latestCheckpoint.Notes.Count == 0
-        ? "No checkpoint notes are available yet."
-        : string.Join(" ", latestCheckpoint.Notes);
+    public string UndoNotesText
+    {
+        get
+        {
+            var notes = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(latestCheckpoint.CheckpointEligibility))
+            {
+                notes.Add($"Checkpoint posture: {FormatCheckpointEligibilityLabel(latestCheckpoint.CheckpointEligibility)}. {BuildCheckpointEligibilityNote()}");
+            }
+
+            if (latestCheckpoint.OptimizationRollbackStates.Count > 0)
+            {
+                notes.Add($"{latestCheckpoint.OptimizationRollbackStates.Count:N0} optimization rollback states were retained for reversible fixes.");
+            }
+
+            if (persistedCheckpointDetail.Found)
+            {
+                notes.Add(CheckpointDetailSummaryText);
+            }
+
+            if (latestCheckpoint.Notes.Count > 0)
+            {
+                notes.Add(string.Join(" ", latestCheckpoint.Notes));
+            }
+
+            return notes.Count == 0
+                ? "No checkpoint notes are available yet."
+                : string.Join(" ", notes);
+        }
+    }
 
     public string MutableRootsSummaryText => MutableRoots.Count == 0
         ? "No mutable roots are configured yet."
@@ -497,6 +540,10 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanDraftPlan));
                 OnPropertyChanged(nameof(CanPreviewExecution));
                 OnPropertyChanged(nameof(CanExecutePlan));
+                OnPropertyChanged(nameof(CanPreviewOptimizationFix));
+                OnPropertyChanged(nameof(CanApplyOptimizationFix));
+                OnPropertyChanged(nameof(CanRevertOptimizationFix));
+                OnPropertyChanged(nameof(CanPromoteRetainedCleanupPlan));
                 OnPropertyChanged(nameof(CanPreviewUndo));
                 OnPropertyChanged(nameof(CanExecuteUndo));
                 OnPropertyChanged(nameof(BusyStateLabel));
@@ -512,6 +559,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             if (SetProperty(ref isLiveMode, value))
             {
                 OnPropertyChanged(nameof(CanExecutePlan));
+                OnPropertyChanged(nameof(CanApplyOptimizationFix));
+                OnPropertyChanged(nameof(CanRevertOptimizationFix));
+                OnPropertyChanged(nameof(CanPromoteRetainedCleanupPlan));
                 OnPropertyChanged(nameof(CanExecuteUndo));
             }
         }
@@ -529,6 +579,18 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
     public bool CanExecutePlan => !IsBusy && HasPlan && IsLiveMode;
 
+    public bool CanPreviewOptimizationFix => !IsBusy && GetLeadSafeOptimizationFinding() is not null;
+
+    public bool CanApplyOptimizationFix => !IsBusy && IsLiveMode && GetLeadAutoApplicableOptimizationFinding() is not null;
+
+    public bool CanRevertOptimizationFix => !IsBusy && IsLiveMode && !string.IsNullOrWhiteSpace(lastOptimizationExecutionRecordId);
+
+    public bool CanPromoteRetainedCleanupPlan =>
+        !IsBusy
+        && IsLiveMode
+        && persistedDuplicateMaterializedPlan.Found
+        && persistedDuplicateMaterializedPlan.CanMaterialize;
+
     public bool CanPreviewUndo => !IsBusy && HasUndoCheckpoint;
 
     public bool CanExecuteUndo => !IsBusy && HasUndoCheckpoint && IsLiveMode;
@@ -540,6 +602,100 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
     public int DuplicateCount => currentScan.Duplicates.Count;
 
     public int OptimizationCount => currentOptimization.Findings.Count;
+
+    public int OptimizationAutoFixReadyCount =>
+        currentOptimization.Findings.Count(finding => finding.CanAutoFix && !finding.RequiresApproval);
+
+    public int OptimizationApprovalGateCount =>
+        currentOptimization.Findings.Count(static finding => finding.RequiresApproval);
+
+    public int OptimizationRecommendationOnlyCount =>
+        currentOptimization.Findings.Count(static finding => !finding.CanAutoFix);
+
+    public double OptimizationAutoFixPercent =>
+        ComputePercent(OptimizationAutoFixReadyCount, currentOptimization.Findings.Count);
+
+    public double OptimizationApprovalPercent =>
+        ComputePercent(OptimizationApprovalGateCount, currentOptimization.Findings.Count);
+
+    public double OptimizationRecommendationPercent =>
+        ComputePercent(OptimizationRecommendationOnlyCount, currentOptimization.Findings.Count);
+
+    public string OptimizationActionMixText =>
+        currentOptimization.Findings.Count == 0
+            ? "Atlas will map safe fix pressure here once optimization analysis runs."
+            : $"{OptimizationAutoFixReadyCount:N0} auto-fix ready, {OptimizationApprovalGateCount:N0} approval-gated, and {OptimizationRecommendationOnlyCount:N0} recommendation-only findings are active.";
+
+    public int RecoveryInverseAssetCount => latestCheckpoint.InverseOperations.Count;
+
+    public int RecoveryQuarantineAssetCount => latestCheckpoint.QuarantineItems.Count;
+
+    public int RecoveryOptimizationRollbackCount => latestCheckpoint.OptimizationRollbackStates.Count;
+
+    public double RecoveryInverseAssetPercent =>
+        ComputePercent(RecoveryInverseAssetCount, RecoveryInverseAssetCount + RecoveryQuarantineAssetCount + RecoveryOptimizationRollbackCount);
+
+    public double RecoveryQuarantineAssetPercent =>
+        ComputePercent(RecoveryQuarantineAssetCount, RecoveryInverseAssetCount + RecoveryQuarantineAssetCount + RecoveryOptimizationRollbackCount);
+
+    public double RecoveryOptimizationRollbackPercent =>
+        ComputePercent(RecoveryOptimizationRollbackCount, RecoveryInverseAssetCount + RecoveryQuarantineAssetCount + RecoveryOptimizationRollbackCount);
+
+    public string RecoveryAssetMixText =>
+        HasUndoCheckpoint
+            ? $"{RecoveryInverseAssetCount:N0} inverse ops, {RecoveryQuarantineAssetCount:N0} quarantine restores, and {RecoveryOptimizationRollbackCount:N0} optimization rollback states shape the current recovery mesh."
+            : persistedHistory.RecentCheckpoints.Count > 0
+                ? $"{persistedHistory.RecentCheckpoints.Count:N0} stored checkpoints exist, but Atlas has not staged a live rollback mesh in this session yet."
+                : "Atlas will map inverse operations, quarantine restores, and optimization rollback states here once recovery metadata exists.";
+
+    public int StoredPromotedPlanCount =>
+        persistedHistory.RecentPlans.Count(plan => IsRetainedDuplicatePlanSource(plan.Source));
+
+    public int StoredSessionLinkedPlanCount =>
+        persistedHistory.RecentPlans.Count(plan =>
+            !IsRetainedDuplicatePlanSource(plan.Source)
+            && !string.IsNullOrWhiteSpace(plan.SourceSessionId));
+
+    public int StoredStandalonePlanCount =>
+        Math.Max(0, persistedHistory.RecentPlans.Count - StoredPromotedPlanCount - StoredSessionLinkedPlanCount);
+
+    public double StoredPromotedPlanPercent =>
+        ComputePercent(StoredPromotedPlanCount, persistedHistory.RecentPlans.Count);
+
+    public double StoredSessionLinkedPlanPercent =>
+        ComputePercent(StoredSessionLinkedPlanCount, persistedHistory.RecentPlans.Count);
+
+    public double StoredStandalonePlanPercent =>
+        ComputePercent(StoredStandalonePlanCount, persistedHistory.RecentPlans.Count);
+
+    public string StoredPlanSourceMixText =>
+        persistedHistory.RecentPlans.Count == 0
+            ? "Atlas will map saved-plan source mix here once history contains stored plans."
+            : $"{StoredPromotedPlanCount:N0} retained-plan promotions, {StoredSessionLinkedPlanCount:N0} session-linked plans, and {StoredStandalonePlanCount:N0} standalone plans are visible in stored history.";
+
+    public string PersistedConversationSummaryText
+    {
+        get => persistedConversationSummaryText;
+        private set => SetProperty(ref persistedConversationSummaryText, value);
+    }
+
+    public string ConversationSummarySnapshotText
+    {
+        get => conversationSummarySnapshotText;
+        private set => SetProperty(ref conversationSummarySnapshotText, value);
+    }
+
+    public string CheckpointDetailSummaryText
+    {
+        get => checkpointDetailSummaryText;
+        private set => SetProperty(ref checkpointDetailSummaryText, value);
+    }
+
+    public string OptimizationFixSummaryText
+    {
+        get => optimizationFixSummaryText;
+        private set => SetProperty(ref optimizationFixSummaryText, value);
+    }
 
     public bool ExcludeSyncFoldersByDefault
     {
@@ -797,6 +953,153 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             });
     }
 
+    public async Task PreviewOptimizationFixAsync()
+    {
+        var leadFinding = GetLeadSafeOptimizationFinding();
+        if (leadFinding is null)
+        {
+            return;
+        }
+
+        await ExecuteGuardedAsync(
+            "Previewing the lead safe optimization fix...",
+            async cancellationToken =>
+            {
+                var liveResponse = IsLiveMode
+                    ? await TryPipeCallAsync<OptimizationFixPreviewRequest, OptimizationFixPreviewResponse>(
+                        "optimization/fix-preview",
+                        new OptimizationFixPreviewRequest { FindingId = leadFinding.FindingId },
+                        cancellationToken)
+                    : null;
+
+                optimizationFixPreview = liveResponse ?? BuildPreviewOptimizationFixResponse(leadFinding);
+                OptimizationFixSummaryText = BuildOptimizationFixPreviewSummary(optimizationFixPreview, liveResponse is null);
+
+                StatusLine = liveResponse is null
+                    ? "Atlas previewed the lead safe fix locally. The service is still required for any real machine change."
+                    : "Lead safe fix preview is ready. Atlas can now explain the exact rollback posture before applying it.";
+
+                AddActivity("Optimization fix preview", OptimizationFixSummaryText);
+                OnPropertyChanged(nameof(CanPreviewOptimizationFix));
+                OnPropertyChanged(nameof(CanApplyOptimizationFix));
+                OnPropertyChanged(nameof(CanRevertOptimizationFix));
+            });
+    }
+
+    public async Task ApplyOptimizationFixAsync()
+    {
+        var leadFinding = GetLeadAutoApplicableOptimizationFinding();
+        if (leadFinding is null || !IsLiveMode)
+        {
+            return;
+        }
+
+        await ExecuteGuardedAsync(
+            "Applying the lead safe optimization fix...",
+            async cancellationToken =>
+            {
+                var response = await TryPipeCallAsync<OptimizationFixApplyRequest, OptimizationFixApplyResponse>(
+                    "optimization/fix-apply",
+                    new OptimizationFixApplyRequest { FindingId = leadFinding.FindingId },
+                    cancellationToken);
+
+                if (response is null)
+                {
+                    StatusLine = "The service dropped offline before Atlas could apply the lead safe fix.";
+                    AddActivity("Optimization apply interrupted", StatusLine);
+                    return;
+                }
+
+                if (!response.Success)
+                {
+                    OptimizationFixSummaryText = string.IsNullOrWhiteSpace(response.Message)
+                        ? "Atlas could not apply the lead safe fix under the current service posture."
+                        : response.Message;
+                    StatusLine = OptimizationFixSummaryText;
+                    AddActivity("Optimization apply blocked", StatusLine);
+                    return;
+                }
+
+                lastOptimizationExecutionRecordId = response.ExecutionRecordId;
+                optimizationFixPreview = new OptimizationFixPreviewResponse();
+
+                var appliedFinding = currentOptimization.Findings
+                    .FirstOrDefault(finding => string.Equals(finding.FindingId, response.FindingId, StringComparison.OrdinalIgnoreCase));
+
+                if (appliedFinding is not null)
+                {
+                    currentOptimization.Findings.Remove(appliedFinding);
+                }
+
+                ApplyOptimizationState();
+                await RefreshPersistedHistoryAsync(cancellationToken);
+
+                OptimizationFixSummaryText = response.HasRollbackState
+                    ? $"{FormatOptimizationKind(response.Kind)} fix applied. Rollback record {ShortId(response.ExecutionRecordId)} is retained for later revert."
+                    : $"{FormatOptimizationKind(response.Kind)} fix applied. The service did not retain a rollback record for this fix.";
+                StatusLine = string.IsNullOrWhiteSpace(response.Message)
+                    ? "Lead safe optimization fix applied through the service."
+                    : response.Message;
+
+                AddActivity("Optimization fix applied", OptimizationFixSummaryText);
+                OnPropertyChanged(nameof(CanPreviewOptimizationFix));
+                OnPropertyChanged(nameof(CanApplyOptimizationFix));
+                OnPropertyChanged(nameof(CanRevertOptimizationFix));
+            });
+    }
+
+    public async Task RevertOptimizationFixAsync()
+    {
+        if (string.IsNullOrWhiteSpace(lastOptimizationExecutionRecordId) || !IsLiveMode)
+        {
+            return;
+        }
+
+        await ExecuteGuardedAsync(
+            "Reverting the latest safe optimization fix...",
+            async cancellationToken =>
+            {
+                var response = await TryPipeCallAsync<OptimizationFixRevertRequest, OptimizationFixRevertResponse>(
+                    "optimization/fix-revert",
+                    new OptimizationFixRevertRequest { ExecutionRecordId = lastOptimizationExecutionRecordId },
+                    cancellationToken);
+
+                if (response is null)
+                {
+                    StatusLine = "The service dropped offline before Atlas could revert the last safe fix.";
+                    AddActivity("Optimization revert interrupted", StatusLine);
+                    return;
+                }
+
+                if (!response.Success)
+                {
+                    OptimizationFixSummaryText = string.IsNullOrWhiteSpace(response.Message)
+                        ? "Atlas could not revert the last safe fix under the current service posture."
+                        : response.Message;
+                    StatusLine = OptimizationFixSummaryText;
+                    AddActivity("Optimization revert blocked", StatusLine);
+                    return;
+                }
+
+                var revertedRecordId = lastOptimizationExecutionRecordId;
+                lastOptimizationExecutionRecordId = string.Empty;
+
+                await RefreshPersistedHistoryAsync(cancellationToken);
+
+                OptimizationFixSummaryText = string.IsNullOrWhiteSpace(response.RevertRecordId)
+                    ? $"{FormatOptimizationKind(response.Kind)} revert completed for record {ShortId(revertedRecordId)}."
+                    : $"{FormatOptimizationKind(response.Kind)} revert completed. Revert record {ShortId(response.RevertRecordId)} is now retained.";
+                StatusLine = string.IsNullOrWhiteSpace(response.Message)
+                    ? "Last safe optimization fix reverted through the service."
+                    : response.Message;
+
+                AddActivity("Optimization fix reverted", OptimizationFixSummaryText);
+                OnPropertyChanged(nameof(CanPreviewOptimizationFix));
+                OnPropertyChanged(nameof(CanApplyOptimizationFix));
+                OnPropertyChanged(nameof(CanRevertOptimizationFix));
+            });
+    }
+
     public async Task PreviewExecutionAsync()
     {
         if (!HasPlan)
@@ -904,6 +1207,88 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                     response.Success
                         ? "Use the undo workspace to inspect the new checkpoint and verify restore posture."
                         : "Inspect the latest plan, risk summary, and guardrails before retrying.");
+            });
+    }
+
+    public async Task PromoteRetainedCleanupPlanAsync()
+    {
+        if (!CanPromoteRetainedCleanupPlan
+            || !persistedInventorySnapshot.HasSession
+            || string.IsNullOrWhiteSpace(persistedInventorySnapshot.SessionId))
+        {
+            return;
+        }
+
+        await ExecuteGuardedAsync(
+            "Promoting retained cleanup plan into saved plan history...",
+            async cancellationToken =>
+            {
+                if (!IsLiveMode)
+                {
+                    StatusLine = "Retained cleanup plan promotion is blocked in preview mode. The service is required to save plan history.";
+                    AddActivity("Promotion blocked", StatusLine);
+                    return;
+                }
+
+                var response = await TryPipeCallAsync<PromoteDuplicateCleanupPlanRequest, PromoteDuplicateCleanupPlanResponse>(
+                    "inventory/duplicate-cleanup-plan-promote",
+                    new PromoteDuplicateCleanupPlanRequest
+                    {
+                        SessionId = persistedInventorySnapshot.SessionId,
+                        MaxGroups = 8,
+                        MaxOperationsPerGroup = 6
+                    },
+                    cancellationToken);
+
+                if (response is null)
+                {
+                    StatusLine = "The service dropped offline before Atlas could save the retained cleanup plan.";
+                    AddActivity("Promotion interrupted", StatusLine);
+                    return;
+                }
+
+                persistedDuplicatePromotedPlan = response;
+
+                if (!response.Found || !response.Promoted)
+                {
+                    StatusLine = BuildDuplicatePromotionBlockedStatus(response);
+                    AddActivity("Promotion blocked", StatusLine);
+                    RefreshDuplicateDetailCards();
+                    OnPropertyChanged(nameof(CanPromoteRetainedCleanupPlan));
+                    return;
+                }
+
+                var promotedPlan = await LoadPromotedDuplicateCleanupPlanAsync(response.SavedPlanId, cancellationToken);
+                currentPlan = promotedPlan ?? new PlanResponse
+                {
+                    Plan = persistedDuplicateMaterializedPlan.Plan,
+                    Summary = BuildPromotedDuplicateCleanupPlanSummary(response)
+                };
+
+                ApplyPlanState();
+                await RefreshPersistedHistoryAsync(cancellationToken);
+                RefreshDuplicateDetailCards();
+
+                CurrentFocus = $"Retained cleanup plan saved as {response.SavedPlanId}";
+                StatusLine = response.IsNewlyPromoted
+                    ? "Retained duplicate cleanup plan promoted into saved plan history."
+                    : "Retained duplicate cleanup plan was already present in saved plan history.";
+
+                AddActivity(
+                    response.IsNewlyPromoted ? "Cleanup plan promoted" : "Cleanup plan reused",
+                    BuildPromotedDuplicateCleanupPlanSummary(response));
+
+                ApplyCommandPreview(
+                    response.IsNewlyPromoted
+                        ? "The retained duplicate cleanup plan is now a first-class saved plan."
+                        : "Atlas reused the existing retained cleanup plan from saved history.",
+                    BuildPromotedDuplicateCleanupPlanSummary(response),
+                    "Plan promotion",
+                    "Plan Review",
+                    response.IsNewlyPromoted ? "Saved plan ready" : "Saved plan reused",
+                    currentPlan.Summary,
+                    "Inspect the saved plan",
+                    "Review the plan diff, operation list, and rollback posture just like any other saved plan before previewing execution.");
             });
     }
 
@@ -1248,6 +1633,10 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         if (snapshot is null)
         {
             persistedHistory = new();
+            persistedConversationSummaries = new();
+            persistedConversationDetail = new();
+            persistedConversationSnapshot = new();
+            persistedCheckpointDetail = new();
             persistedInventorySnapshot = new();
             persistedInventorySessions = new();
             persistedInventoryDetail = new();
@@ -1257,6 +1646,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             persistedDuplicateActionReview = new();
             persistedDuplicateCleanupPreview = new();
             persistedDuplicateCleanupBatchPreview = new();
+            persistedDuplicateCleanupPlanPreview = new();
+            persistedDuplicateMaterializedPlan = new();
+            persistedDuplicatePromotedPlan = new();
             liveFileInspection = new();
             persistedFileDetail = new();
             persistedDriftSnapshot = new();
@@ -1278,6 +1670,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             ReplaceAll(PersistedPlanMemory, []);
             ReplaceAll(PersistedFindingMemory, []);
             ReplaceAll(PersistedTraceMemory, []);
+            ReplaceAll(PersistedConversationMemory, []);
             ScanContinuitySummaryText = "Scan continuity will appear here once Atlas can compare persisted sessions.";
             RescanStorySummaryText = "Rescan story will appear here once Atlas can compare stored sessions.";
             DriftReviewSummaryText = "Drift review will appear here once Atlas can compare stored scan sessions more explicitly.";
@@ -1290,15 +1683,21 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             PersistedVolumeSummaryText = "Stored volume posture will appear here once Atlas can inspect a persisted scan session.";
             PersistedFileSampleSummaryText = "Stored file samples will appear here once Atlas can inspect persisted inventory rows.";
             PersistedDuplicateSummaryText = "Stored duplicate review will appear here once Atlas can inspect retained duplicate groups.";
-            DuplicateDetailSummaryText = "Retained duplicate drill-in will appear here once Atlas can inspect one persisted duplicate group and review its cleanup posture.";
+            DuplicateDetailSummaryText = "Retained duplicate drill-in will appear here once Atlas can inspect one persisted duplicate group and review its cleanup posture or materialized cleanup plan.";
             FileExplainabilitySummaryText = "File explainability will appear here once Atlas can inspect a representative file through the service.";
             PersistedPlanSummaryText = "Stored plan drafts will appear here once the service can answer history queries.";
             PersistedFindingSummaryText = "Stored optimization findings will appear here once the service can answer history queries.";
             PersistedTraceSummaryText = "Stored planning and voice traces will appear here once the service can answer history queries.";
+            PersistedConversationSummaryText = "Stored conversation summaries will appear here once the service can answer compaction-history queries.";
+            ConversationSummarySnapshotText = "Conversation compaction rollups will appear here once the service exposes aggregate summary memory.";
+            CheckpointDetailSummaryText = "Checkpoint detail will appear here once Atlas can inspect one retained recovery checkpoint more deeply.";
             RebuildRecoveryCollections();
             RefreshInventorySignals();
             RefreshInventoryMemoryCards();
             RefreshHistoryMetrics();
+            OnInsightPropertiesChanged();
+            OnPropertyChanged(nameof(UndoNotesText));
+            OnPropertyChanged(nameof(CanPromoteRetainedCleanupPlan));
             return;
         }
 
@@ -1306,6 +1705,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         await RefreshPersistedInventoryAsync(cancellationToken);
         await RefreshDuplicateDetailAsync(cancellationToken);
         await RefreshFileExplainabilityAsync(cancellationToken);
+        await RefreshConversationSummariesAsync(cancellationToken);
+        await RefreshConversationSummarySnapshotAsync(cancellationToken);
+        await RefreshCheckpointDetailAsync(cancellationToken);
 
         ReplaceAll(PersistedScanSessionMemory, persistedInventorySessions.Sessions.Select(CreateStoredScanSessionCard));
         ReplaceAll(PersistedVolumeMemory, persistedInventoryDetail.Volumes.Select(CreateStoredVolumeCard));
@@ -1314,9 +1716,46 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             .Select(CreateStoredDuplicateCard)
             .ToList();
 
+        if (persistedDuplicatePromotedPlan.Found)
+        {
+            persistedDuplicateCards.Insert(0, CreateStoredDuplicatePromotedPlanCard());
+        }
+
+        if (persistedDuplicateMaterializedPlan.Found)
+        {
+            persistedDuplicateCards.Insert(Math.Min(1, persistedDuplicateCards.Count), CreateStoredDuplicateMaterializedPlanCard());
+        }
+
+        if (persistedDuplicateCleanupPlanPreview.Found)
+        {
+            var insertIndex = Math.Min(1, persistedDuplicateCards.Count);
+            persistedDuplicateCards.Insert(insertIndex, CreateStoredDuplicatePlanPreviewCard());
+
+            var leadIncludedGroup = persistedDuplicateCleanupPlanPreview.IncludedGroups
+                .OrderByDescending(static group => group.OperationCount)
+                .ThenByDescending(static group => group.CleanupConfidence)
+                .FirstOrDefault();
+
+            if (leadIncludedGroup is not null)
+            {
+                persistedDuplicateCards.Insert(Math.Min(insertIndex + 1, persistedDuplicateCards.Count), CreateStoredDuplicatePlanIncludedGroupCard(leadIncludedGroup));
+            }
+
+            var leadBlockedGroup = persistedDuplicateCleanupPlanPreview.BlockedGroups
+                .OrderByDescending(static group => group.CleanupConfidence)
+                .ThenByDescending(static group => group.BlockedReasons.Count)
+                .FirstOrDefault();
+
+            if (leadBlockedGroup is not null)
+            {
+                persistedDuplicateCards.Insert(Math.Min(insertIndex + 2, persistedDuplicateCards.Count), CreateStoredDuplicatePlanBlockedGroupCard(leadBlockedGroup));
+            }
+        }
+
         if (persistedDuplicateCleanupBatchPreview.Found)
         {
-            persistedDuplicateCards.Insert(0, CreateStoredDuplicateBatchPreviewCard());
+            var insertIndex = Math.Min(3, persistedDuplicateCards.Count);
+            persistedDuplicateCards.Insert(insertIndex, CreateStoredDuplicateBatchPreviewCard());
 
             var leadBatchGroup = persistedDuplicateCleanupBatchPreview.Groups
                 .OrderByDescending(static group => group.IsPreviewable)
@@ -1326,18 +1765,28 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
             if (leadBatchGroup is not null)
             {
-                persistedDuplicateCards.Insert(1, CreateStoredDuplicateBatchGroupCard(leadBatchGroup));
+                persistedDuplicateCards.Insert(Math.Min(insertIndex + 1, persistedDuplicateCards.Count), CreateStoredDuplicateBatchGroupCard(leadBatchGroup));
             }
         }
 
         ReplaceAll(PersistedDuplicateMemory, persistedDuplicateCards);
-        ReplaceAll(PersistedPlanMemory, persistedHistory.RecentPlans.Select(CreateStoredPlanCard));
+        var planMemory = persistedHistory.RecentPlans
+            .Select(CreateStoredPlanCard)
+            .ToList();
+
+        if (ShouldShowRetainedCleanupPlanLifecycleCard())
+        {
+            planMemory.Insert(0, CreateRetainedCleanupPlanLifecycleCard());
+        }
+
+        ReplaceAll(PersistedPlanMemory, planMemory);
         ReplaceAll(PersistedFindingMemory, persistedHistory.RecentFindings.Select(CreateStoredFindingCard));
         ReplaceAll(PersistedTraceMemory, persistedHistory.RecentTraces.Select(CreateStoredTraceCard));
+        ReplaceAll(PersistedConversationMemory, persistedConversationSummaries.Summaries.Select(CreateConversationSummaryCard));
 
         PersistedMemorySummaryText = persistedInventorySnapshot.HasSession
-            ? $"{persistedInventorySessions.Sessions.Count:N0} stored scans, {persistedSessionDuplicates.TotalCount:N0} retained duplicate groups, {persistedHistory.RecentPlans.Count:N0} plans, {persistedHistory.RecentCheckpoints.Count:N0} checkpoints, {persistedHistory.RecentQuarantine.Count:N0} quarantine items, {persistedHistory.RecentFindings.Count:N0} findings, and {persistedHistory.RecentTraces.Count:N0} traces are available from stored service memory."
-            : $"{persistedHistory.RecentPlans.Count:N0} plans, {persistedHistory.RecentCheckpoints.Count:N0} checkpoints, {persistedHistory.RecentQuarantine.Count:N0} quarantine items, {persistedHistory.RecentFindings.Count:N0} findings, and {persistedHistory.RecentTraces.Count:N0} traces are available from stored service memory.";
+            ? $"{persistedInventorySessions.Sessions.Count:N0} stored scans, {persistedSessionDuplicates.TotalCount:N0} retained duplicate groups, {persistedHistory.RecentPlans.Count:N0} plans, {persistedHistory.RecentCheckpoints.Count:N0} checkpoints, {persistedHistory.RecentQuarantine.Count:N0} quarantine items, {persistedHistory.RecentFindings.Count:N0} findings, {persistedHistory.RecentTraces.Count:N0} traces, and {persistedConversationSummaries.TotalCount:N0} conversation summaries are available from stored service memory."
+            : $"{persistedHistory.RecentPlans.Count:N0} plans, {persistedHistory.RecentCheckpoints.Count:N0} checkpoints, {persistedHistory.RecentQuarantine.Count:N0} quarantine items, {persistedHistory.RecentFindings.Count:N0} findings, {persistedHistory.RecentTraces.Count:N0} traces, and {persistedConversationSummaries.TotalCount:N0} conversation summaries are available from stored service memory.";
         if (persistedDriftSnapshot.HasBaseline)
         {
             PersistedMemorySummaryText += $" The latest scan pair shows {persistedDriftSnapshot.AddedCount:N0} added, {persistedDriftSnapshot.RemovedCount:N0} removed, and {persistedDriftSnapshot.ChangedCount:N0} changed paths.";
@@ -1363,6 +1812,13 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         PersistedTraceSummaryText = PersistedTraceMemory.Count == 0
             ? "No stored prompt traces are available yet."
             : string.Join("\n\n", PersistedTraceMemory.Take(3).Select(card => $"{card.Eyebrow}: {card.Title}\n{card.Detail}"));
+        PersistedConversationSummaryText = PersistedConversationMemory.Count == 0
+            ? "No stored conversation summaries are available yet."
+            : string.Join("\n\n", PersistedConversationMemory.Take(3).Select(card => $"{card.Eyebrow}: {card.Title}\n{card.Detail}"));
+        if (persistedConversationSnapshot.TotalSummaryCount > 0)
+        {
+            PersistedConversationSummaryText += $"\n\n{ConversationSummarySnapshotText}";
+        }
 
         RefreshScanContinuitySignals();
         RefreshRescanStoryCards();
@@ -1376,6 +1832,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         RefreshInventorySignals();
         RefreshInventoryMemoryCards();
         RefreshHistoryMetrics();
+        OnInsightPropertiesChanged();
     }
 
     private async Task RefreshPersistedInventoryAsync(CancellationToken cancellationToken)
@@ -1396,6 +1853,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             persistedDuplicateActionReview = new();
             persistedDuplicateCleanupPreview = new();
             persistedDuplicateCleanupBatchPreview = new();
+            persistedDuplicateCleanupPlanPreview = new();
+            persistedDuplicateMaterializedPlan = new();
+            persistedDuplicatePromotedPlan = new();
             persistedDriftSnapshot = new();
             persistedSessionDiff = new();
             persistedDiffFiles = new();
@@ -1417,6 +1877,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             persistedDuplicateActionReview = new();
             persistedDuplicateCleanupPreview = new();
             persistedDuplicateCleanupBatchPreview = new();
+            persistedDuplicateCleanupPlanPreview = new();
+            persistedDuplicateMaterializedPlan = new();
+            persistedDuplicatePromotedPlan = new();
             persistedDriftSnapshot = new();
             persistedSessionDiff = new();
             persistedDiffFiles = new();
@@ -1455,6 +1918,9 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         persistedDuplicateActionReview = new();
         persistedDuplicateCleanupPreview = new();
         persistedDuplicateCleanupBatchPreview = new();
+        persistedDuplicateCleanupPlanPreview = new();
+        persistedDuplicateMaterializedPlan = new();
+        persistedDuplicatePromotedPlan = new();
 
         if (!persistedInventorySnapshot.HasSession
             || string.IsNullOrWhiteSpace(persistedInventorySnapshot.SessionId))
@@ -1510,7 +1976,82 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             },
             cancellationToken) ?? new DuplicateCleanupBatchPreviewResponse();
 
+        persistedDuplicateCleanupPlanPreview = await TryPipeCallAsync<DuplicateCleanupPlanPreviewRequest, DuplicateCleanupPlanPreviewResponse>(
+            "inventory/duplicate-cleanup-plan-preview",
+            new DuplicateCleanupPlanPreviewRequest
+            {
+                SessionId = persistedInventorySnapshot.SessionId,
+                MaxGroups = 8,
+                MaxOperationsPerGroup = 6
+            },
+            cancellationToken) ?? new DuplicateCleanupPlanPreviewResponse();
+
+        persistedDuplicateMaterializedPlan = await TryPipeCallAsync<MaterializeDuplicateCleanupPlanRequest, MaterializeDuplicateCleanupPlanResponse>(
+            "inventory/duplicate-cleanup-plan-materialize",
+            new MaterializeDuplicateCleanupPlanRequest
+            {
+                SessionId = persistedInventorySnapshot.SessionId,
+                MaxGroups = 8,
+                MaxOperationsPerGroup = 6
+            },
+            cancellationToken) ?? new MaterializeDuplicateCleanupPlanResponse();
+
+        TryAdoptPersistedDuplicateMaterializedPlan();
         RefreshDuplicateDetailCards();
+        OnPropertyChanged(nameof(CanPromoteRetainedCleanupPlan));
+    }
+
+    private void TryAdoptPersistedDuplicateMaterializedPlan()
+    {
+        if (!persistedDuplicateMaterializedPlan.Found
+            || !persistedDuplicateMaterializedPlan.CanMaterialize
+            || persistedDuplicateMaterializedPlan.Plan.Operations.Count == 0
+            || currentPlan.Plan.Operations.Count > 0)
+        {
+            return;
+        }
+
+        currentPlan = new PlanResponse
+        {
+            Plan = persistedDuplicateMaterializedPlan.Plan,
+            Summary = BuildMaterializedDuplicatePlanSessionSummary()
+        };
+
+        ApplyPlanState();
+    }
+
+    private async Task<PlanResponse?> LoadPromotedDuplicateCleanupPlanAsync(string planId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(planId))
+        {
+            return null;
+        }
+
+        var detail = await TryPipeCallAsync<HistoryPlanDetailRequest, HistoryPlanDetailResponse>(
+            "history/plan-detail",
+            new HistoryPlanDetailRequest { PlanId = planId },
+            cancellationToken);
+
+        if (detail is null || !detail.Found || detail.Plan.Operations.Count == 0)
+        {
+            return null;
+        }
+
+        return new PlanResponse
+        {
+            Plan = detail.Plan,
+            Summary = BuildPromotedDuplicateCleanupPlanSummary(persistedDuplicatePromotedPlan)
+        };
+    }
+
+    private static string BuildDuplicatePromotionBlockedStatus(PromoteDuplicateCleanupPlanResponse response)
+    {
+        var degradedReason = response.DegradedReasons
+            .FirstOrDefault(static reason => !string.IsNullOrWhiteSpace(reason));
+
+        return string.IsNullOrWhiteSpace(degradedReason)
+            ? "Atlas could not save the retained cleanup plan under the current trust and policy posture."
+            : $"Atlas could not save the retained cleanup plan because {degradedReason}.";
     }
 
     private async Task RefreshFileExplainabilityAsync(CancellationToken cancellationToken)
@@ -1544,6 +2085,68 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         }
 
         RefreshFileExplainabilityCards();
+    }
+
+    private async Task RefreshConversationSummariesAsync(CancellationToken cancellationToken)
+    {
+        persistedConversationSummaries = await TryPipeCallAsync<ConversationSummaryListRequest, ConversationSummaryListResponse>(
+            "conversation/summaries",
+            new ConversationSummaryListRequest { Limit = 6 },
+            cancellationToken) ?? new ConversationSummaryListResponse();
+
+        var leadConversationId = persistedConversationSummaries.Summaries
+            .Select(static summary => summary.ConversationId)
+            .FirstOrDefault(static id => !string.IsNullOrWhiteSpace(id));
+
+        if (string.IsNullOrWhiteSpace(leadConversationId))
+        {
+            persistedConversationDetail = new ConversationSummaryDetailResponse();
+            return;
+        }
+
+        persistedConversationDetail = await TryPipeCallAsync<ConversationSummaryDetailRequest, ConversationSummaryDetailResponse>(
+            "conversation/summary-detail",
+            new ConversationSummaryDetailRequest { ConversationId = leadConversationId },
+            cancellationToken) ?? new ConversationSummaryDetailResponse();
+    }
+
+    private async Task RefreshConversationSummarySnapshotAsync(CancellationToken cancellationToken)
+    {
+        persistedConversationSnapshot = await TryPipeCallAsync<ConversationSummarySnapshotRequest, ConversationSummarySnapshotResponse>(
+            "conversation/summary-snapshot",
+            new ConversationSummarySnapshotRequest(),
+            cancellationToken) ?? new ConversationSummarySnapshotResponse();
+
+        ConversationSummarySnapshotText = persistedConversationSnapshot.TotalSummaryCount == 0
+            ? "No compacted conversation rollups are available yet."
+            : $"{persistedConversationSnapshot.TotalSummaryCount:N0} summary windows span {persistedConversationSnapshot.CompactedConversationCount:N0} compacted conversations and {persistedConversationSnapshot.NonCompactedConversationCount:N0} retained conversations. {persistedConversationSnapshot.CompactedSummaryCount:N0} windows are compacted and {persistedConversationSnapshot.RetainedSummaryCount:N0} are still retained in full.";
+    }
+
+    private async Task RefreshCheckpointDetailAsync(CancellationToken cancellationToken)
+    {
+        persistedCheckpointDetail = new CheckpointDetailResponse();
+
+        var checkpointId = !string.IsNullOrWhiteSpace(latestCheckpoint.CheckpointId)
+            ? latestCheckpoint.CheckpointId
+            : persistedHistory.RecentCheckpoints
+                .Select(static checkpoint => checkpoint.CheckpointId)
+                .FirstOrDefault(static id => !string.IsNullOrWhiteSpace(id));
+
+        if (string.IsNullOrWhiteSpace(checkpointId))
+        {
+            CheckpointDetailSummaryText = "No retained checkpoint detail is available yet.";
+            return;
+        }
+
+        persistedCheckpointDetail = await TryPipeCallAsync<CheckpointDetailRequest, CheckpointDetailResponse>(
+            "checkpoint/detail",
+            new CheckpointDetailRequest { CheckpointId = checkpointId },
+            cancellationToken) ?? new CheckpointDetailResponse();
+
+        CheckpointDetailSummaryText = !persistedCheckpointDetail.Found
+            ? "Checkpoint detail could not be loaded from the service."
+            : BuildCheckpointDetailSummaryText();
+        OnPropertyChanged(nameof(UndoNotesText));
     }
 
     private async Task RefreshPersistedDriftAsync(CancellationToken cancellationToken)
@@ -1625,11 +2228,63 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         ReplaceAll(QuarantineEntries, quarantineItems);
     }
 
-    private static AtlasStoredMemoryCard CreateStoredPlanCard(HistoryPlanSummary plan) =>
-        new(
+    private static AtlasStoredMemoryCard CreateStoredPlanCard(HistoryPlanSummary plan)
+    {
+        var detailParts = new List<string>
+        {
+            string.IsNullOrWhiteSpace(plan.Summary)
+                ? $"Plan {ShortId(plan.PlanId)} is available from stored history."
+                : plan.Summary
+        };
+
+        if (!string.IsNullOrWhiteSpace(plan.Source))
+        {
+            detailParts.Add($"Source: {FormatPlanSourceLabel(plan.Source)}.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(plan.SourceSessionId))
+        {
+            detailParts.Add($"Source session: {ShortId(plan.SourceSessionId)}.");
+        }
+
+        return new AtlasStoredMemoryCard(
             FormatHistoryTimestamp(plan.CreatedUtc),
             string.IsNullOrWhiteSpace(plan.Scope) ? "Stored plan" : plan.Scope,
-            string.IsNullOrWhiteSpace(plan.Summary) ? $"Plan {ShortId(plan.PlanId)} is available from stored history." : plan.Summary);
+            string.Join(" ", detailParts));
+    }
+
+    private static string FormatPlanSourceLabel(string source) =>
+        source.Trim() switch
+        {
+            "DuplicateCleanupPromotion" => "Retained duplicate cleanup promotion",
+            "" => "Standard planning",
+            _ => source
+        };
+
+    private bool ShouldShowRetainedCleanupPlanLifecycleCard() =>
+        persistedDuplicatePromotedPlan.Found
+        || persistedDuplicateMaterializedPlan.CanMaterialize
+        || (persistedDuplicateCleanupPlanPreview.Found && persistedDuplicateCleanupPlanPreview.IncludedGroupCount > 0);
+
+    private AtlasStoredMemoryCard CreateRetainedCleanupPlanLifecycleCard()
+    {
+        var title = BuildRetainedCleanupPlanLifecycleValue() switch
+        {
+            "Saved" when !string.IsNullOrWhiteSpace(persistedDuplicatePromotedPlan.SavedPlanId)
+                => $"Saved as {persistedDuplicatePromotedPlan.SavedPlanId}",
+            "Reused" when !string.IsNullOrWhiteSpace(persistedDuplicatePromotedPlan.SavedPlanId)
+                => $"History already has {persistedDuplicatePromotedPlan.SavedPlanId}",
+            "Blocked" => "Promotion blocked",
+            "Ready to save" => "Materialized review plan is ready to save",
+            "Preview ready" => "Retained cleanup plan is previewable",
+            _ => "Retained cleanup lifecycle is standing by"
+        };
+
+        return new AtlasStoredMemoryCard(
+            "RETAINED PLAN LIFECYCLE",
+            title,
+            BuildRetainedCleanupPlanLifecycleDetail());
+    }
 
     private static AtlasStoredMemoryCard CreateStoredFindingCard(HistoryFindingSummary finding) =>
         new(
@@ -1642,6 +2297,37 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             FormatHistoryTimestamp(trace.CreatedUtc),
             string.IsNullOrWhiteSpace(trace.Stage) ? "Prompt trace" : trace.Stage.Replace('_', ' '),
             $"Trace {ShortId(trace.TraceId)} is available for later drill-in once detail routes are added.");
+
+    private AtlasStoredMemoryCard CreateConversationSummaryCard(ConversationSummaryDto summary)
+    {
+        var detailParts = new List<string>
+        {
+            string.IsNullOrWhiteSpace(summary.SummaryText)
+                ? "Stored conversation summary is available for later drill-in."
+                : summary.SummaryText
+        };
+
+        if (!string.IsNullOrWhiteSpace(summary.CoveredFromUtc) || !string.IsNullOrWhiteSpace(summary.CoveredUntilUtc))
+        {
+            detailParts.Add($"Coverage: {FormatConversationCoverage(summary.CoveredFromUtc, summary.CoveredUntilUtc)}.");
+        }
+
+        detailParts.Add(summary.IsCompacted
+            ? $"Compacted summary over {summary.MessageCount:N0} messages."
+            : $"Retained summary over {summary.MessageCount:N0} messages.");
+
+        if (persistedConversationDetail.Found
+            && string.Equals(persistedConversationDetail.ConversationId, summary.ConversationId, StringComparison.OrdinalIgnoreCase)
+            && persistedConversationDetail.Summaries.Count > 1)
+        {
+            detailParts.Add($"Conversation {ShortId(summary.ConversationId)} currently has {persistedConversationDetail.Summaries.Count:N0} retained summary windows.");
+        }
+
+        return new AtlasStoredMemoryCard(
+            FormatHistoryTimestamp(summary.CreatedUtc),
+            summary.IsCompacted ? "Compacted conversation memory" : "Conversation summary",
+            string.Join(" ", detailParts));
+    }
 
     private static AtlasStoredMemoryCard CreateStoredScanSessionCard(InventorySessionSummary session) =>
         new(
@@ -1771,6 +2457,95 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             $"{FormatBatchGroupPostureLabel(group)}.{blockedDetail}{noteDetail}");
     }
 
+    private AtlasStoredMemoryCard CreateStoredDuplicateMaterializedPlanCard()
+    {
+        var title = persistedDuplicateMaterializedPlan.CanMaterialize
+            ? $"{persistedDuplicateMaterializedPlan.IncludedGroupCount:N0} groups materialized into plan review"
+            : "Retained cleanup plan materialization blocked";
+
+        return new AtlasStoredMemoryCard(
+            "MATERIALIZED PLAN",
+            title,
+            BuildDuplicateMaterializedPlanDetail());
+    }
+
+    private AtlasStoredMemoryCard CreateStoredDuplicatePromotedPlanCard()
+    {
+        var title = persistedDuplicatePromotedPlan.Promoted
+            ? string.IsNullOrWhiteSpace(persistedDuplicatePromotedPlan.SavedPlanId)
+                ? "Retained cleanup plan saved to history"
+                : $"Saved plan {persistedDuplicatePromotedPlan.SavedPlanId}"
+            : "Retained cleanup plan not saved";
+
+        return new AtlasStoredMemoryCard(
+            "PROMOTED PLAN",
+            title,
+            BuildDuplicatePromotedPlanDetail());
+    }
+
+    private AtlasStoredMemoryCard CreateStoredDuplicatePlanPreviewCard()
+    {
+        var threshold = persistedDuplicateCleanupPlanPreview.ConfidenceThresholdUsed <= 0
+            ? profile.DuplicateAutoDeleteConfidenceThreshold
+            : persistedDuplicateCleanupPlanPreview.ConfidenceThresholdUsed;
+
+        var title = persistedDuplicateCleanupPlanPreview.IncludedGroupCount == 0
+            ? "No retained groups are plan-ready yet"
+            : $"{persistedDuplicateCleanupPlanPreview.IncludedGroupCount:N0} groups included in retained cleanup plan";
+
+        var detail = $"{persistedDuplicateCleanupPlanPreview.IncludedGroupCount:N0} groups included, {persistedDuplicateCleanupPlanPreview.BlockedGroupCount:N0} blocked, and {persistedDuplicateCleanupPlanPreview.TotalPlannedOperations:N0} total operations under the current {threshold:P0} threshold. "
+            + $"{persistedDuplicateCleanupPlanPreview.Rationale} {persistedDuplicateCleanupPlanPreview.RollbackPosture}".Trim();
+
+        return new AtlasStoredMemoryCard(
+            "SESSION CLEANUP PLAN",
+            title,
+            detail);
+    }
+
+    private static AtlasStoredMemoryCard CreateStoredDuplicatePlanIncludedGroupCard(PlanPreviewIncludedGroup group)
+    {
+        var title = Path.GetFileName(group.CanonicalPath);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = group.CanonicalPath;
+        }
+
+        var noteSample = group.ActionNotes
+            .Where(static note => !string.IsNullOrWhiteSpace(note))
+            .Take(2)
+            .ToList();
+        var noteDetail = noteSample.Count == 0
+            ? string.Empty
+            : $" Notes: {string.Join(" ", noteSample.Select(note => $"{note}."))}";
+
+        return new AtlasStoredMemoryCard(
+            "PLAN INCLUDED GROUP",
+            $"{title} ({group.OperationCount:N0} ops, {group.CleanupConfidence:P0} cleanup confidence)",
+            $"{Math.Min(4, group.Operations.Count):N0} bounded cleanup operations are ready while {ShortPath(group.CanonicalPath)} stays canonical.{noteDetail}");
+    }
+
+    private static AtlasStoredMemoryCard CreateStoredDuplicatePlanBlockedGroupCard(PlanPreviewBlockedGroup group)
+    {
+        var title = Path.GetFileName(group.CanonicalPath);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = group.CanonicalPath;
+        }
+
+        var blocked = group.BlockedReasons
+            .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+            .Take(3)
+            .ToList();
+        var blockedDetail = blocked.Count == 0
+            ? "No specific blocked reasons were returned."
+            : string.Join("; ", blocked);
+
+        return new AtlasStoredMemoryCard(
+            "PLAN BLOCKED GROUP",
+            $"{title} ({group.CleanupConfidence:P0} cleanup confidence)",
+            $"{FormatPlanBlockedGroupPostureLabel(group)}. Blocked by: {blockedDetail}.");
+    }
+
     private void RefreshDuplicateDetailCards()
     {
         var cards = new List<AtlasStoredMemoryCard>();
@@ -1804,6 +2579,30 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                     BuildDuplicateCleanupPreviewDetail()));
             }
 
+            if (persistedDuplicateCleanupPlanPreview.Found)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "CLEANUP PLAN",
+                    FormatDuplicateCleanupPlanTitle(),
+                    BuildDuplicateCleanupPlanDetail()));
+            }
+
+            if (persistedDuplicateMaterializedPlan.Found)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "MATERIALIZED PLAN",
+                    FormatDuplicateMaterializedPlanTitle(),
+                    BuildDuplicateMaterializedPlanDetail()));
+            }
+
+            if (persistedDuplicatePromotedPlan.Found)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "PROMOTED PLAN",
+                    FormatDuplicatePromotedPlanTitle(),
+                    BuildDuplicatePromotedPlanDetail()));
+            }
+
             if (persistedDuplicateDetail.Evidence.Count > 0)
             {
                 cards.Add(new AtlasStoredMemoryCard(
@@ -1827,6 +2626,22 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                     $"{Math.Min(4, persistedDuplicateCleanupPreview.Operations.Count):N0} of {persistedDuplicateCleanupPreview.OperationCount:N0} previewed cleanup operations",
                     BuildDuplicateCleanupOperationDetail()));
             }
+
+            if (persistedDuplicateCleanupPlanPreview.IncludedGroups.Count > 0)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "PLAN INCLUDED SAMPLE",
+                    $"{Math.Min(3, persistedDuplicateCleanupPlanPreview.IncludedGroups.Count):N0} of {persistedDuplicateCleanupPlanPreview.IncludedGroupCount:N0} included groups",
+                    BuildDuplicateCleanupPlanIncludedGroupDetail()));
+            }
+
+            if (persistedDuplicateCleanupPlanPreview.BlockedGroups.Count > 0)
+            {
+                cards.Add(new AtlasStoredMemoryCard(
+                    "PLAN BLOCKED SAMPLE",
+                    $"{Math.Min(3, persistedDuplicateCleanupPlanPreview.BlockedGroups.Count):N0} of {persistedDuplicateCleanupPlanPreview.BlockedGroupCount:N0} blocked groups",
+                    BuildDuplicateCleanupPlanBlockedGroupDetail()));
+            }
         }
 
         if (cards.Count == 0)
@@ -1842,7 +2657,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         ReplaceAll(DuplicateDetailCards, cards);
 
         DuplicateDetailSummaryText = persistedDuplicateDetail.Found
-            ? $"Atlas retained duplicate drill-in for {ShortPath(persistedDuplicateDetail.CanonicalPath)} with {persistedDuplicateDetail.Evidence.Count:N0} bounded evidence signals and {persistedDuplicateDetail.MemberCount:N0} member paths.{(string.IsNullOrWhiteSpace(BuildDuplicateActionSummarySentence()) ? string.Empty : $" {BuildDuplicateActionSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateCleanupPreviewSummarySentence()) ? string.Empty : $" {BuildDuplicateCleanupPreviewSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateCleanupBatchSummarySentence()) ? string.Empty : $" {BuildDuplicateCleanupBatchSummarySentence()}")}"
+            ? $"Atlas retained duplicate drill-in for {ShortPath(persistedDuplicateDetail.CanonicalPath)} with {persistedDuplicateDetail.Evidence.Count:N0} bounded evidence signals and {persistedDuplicateDetail.MemberCount:N0} member paths.{(string.IsNullOrWhiteSpace(BuildDuplicateActionSummarySentence()) ? string.Empty : $" {BuildDuplicateActionSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateCleanupPreviewSummarySentence()) ? string.Empty : $" {BuildDuplicateCleanupPreviewSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateCleanupPlanSummarySentence()) ? string.Empty : $" {BuildDuplicateCleanupPlanSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateMaterializedPlanSummarySentence()) ? string.Empty : $" {BuildDuplicateMaterializedPlanSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicatePromotedPlanSummarySentence()) ? string.Empty : $" {BuildDuplicatePromotedPlanSummarySentence()}")}{(string.IsNullOrWhiteSpace(BuildDuplicateCleanupBatchSummarySentence()) ? string.Empty : $" {BuildDuplicateCleanupBatchSummarySentence()}")}"
             : IsLiveMode
                 ? "Atlas is waiting for one retained duplicate group before it can explain why a duplicate set is trustworthy, risky, or cleanup-eligible."
                 : "Retained duplicate drill-in remains empty while the shell is in preview mode and the service detail route is offline.";
@@ -2059,6 +2874,62 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             : $"{persistedDuplicateCleanupBatchPreview.GroupsBlocked:N0} retained groups are currently blocked from cleanup preview under the current policy.";
     }
 
+    private string BuildDuplicateCleanupPlanSummarySentence()
+    {
+        if (!persistedDuplicateCleanupPlanPreview.Found)
+        {
+            return string.Empty;
+        }
+
+        return persistedDuplicateCleanupPlanPreview.IncludedGroupCount > 0
+            ? $"{persistedDuplicateCleanupPlanPreview.IncludedGroupCount:N0} retained groups are included in the bounded cleanup plan, representing {persistedDuplicateCleanupPlanPreview.TotalPlannedOperations:N0} planned operations."
+            : persistedDuplicateCleanupPlanPreview.BlockedGroupCount > 0
+                ? $"{persistedDuplicateCleanupPlanPreview.BlockedGroupCount:N0} retained groups remain blocked from the bounded cleanup plan under current policy."
+                : "No retained duplicate groups are currently available for bounded cleanup planning.";
+    }
+
+    private string BuildDuplicateMaterializedPlanSummarySentence()
+    {
+        if (!persistedDuplicateMaterializedPlan.Found)
+        {
+            return string.Empty;
+        }
+
+        if (persistedDuplicateMaterializedPlan.CanMaterialize)
+        {
+            return $"{persistedDuplicateMaterializedPlan.IncludedGroupCount:N0} retained groups now materialize into a standard plan-review payload with {persistedDuplicateMaterializedPlan.TotalPlannedOperations:N0} operations.";
+        }
+
+        var degradedReason = persistedDuplicateMaterializedPlan.DegradedReasons
+            .FirstOrDefault(static reason => !string.IsNullOrWhiteSpace(reason));
+
+        return string.IsNullOrWhiteSpace(degradedReason)
+            ? "Retained cleanup plan materialization is currently blocked."
+            : $"Retained cleanup plan materialization is blocked: {degradedReason}.";
+    }
+
+    private string BuildDuplicatePromotedPlanSummarySentence()
+    {
+        if (!persistedDuplicatePromotedPlan.Found)
+        {
+            return string.Empty;
+        }
+
+        if (persistedDuplicatePromotedPlan.Promoted)
+        {
+            return string.IsNullOrWhiteSpace(persistedDuplicatePromotedPlan.SavedPlanId)
+                ? "Retained cleanup plan has been promoted into saved plan history."
+                : $"Retained cleanup plan is saved in plan history as {persistedDuplicatePromotedPlan.SavedPlanId}.";
+        }
+
+        var degradedReason = persistedDuplicatePromotedPlan.DegradedReasons
+            .FirstOrDefault(static reason => !string.IsNullOrWhiteSpace(reason));
+
+        return string.IsNullOrWhiteSpace(degradedReason)
+            ? "Retained cleanup plan promotion is currently blocked."
+            : $"Retained cleanup plan promotion is blocked: {degradedReason}.";
+    }
+
     private static string FormatDuplicateActionPostureTitle(DuplicateActionReviewResponse review) =>
         review.RecommendedPosture switch
         {
@@ -2088,6 +2959,29 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 => "Review before previewing cleanup",
             _ => "Keep canonical only"
         };
+
+    private string FormatDuplicateCleanupPlanTitle() =>
+        persistedDuplicateCleanupPlanPreview.IncludedGroupCount > 0
+            ? $"{persistedDuplicateCleanupPlanPreview.IncludedGroupCount:N0} groups / {persistedDuplicateCleanupPlanPreview.TotalPlannedOperations:N0} ops ready"
+            : persistedDuplicateCleanupPlanPreview.BlockedGroupCount > 0
+                ? "Retained cleanup plan still blocked"
+                : "No retained cleanup plan yet";
+
+    private string FormatDuplicateMaterializedPlanTitle() =>
+        persistedDuplicateMaterializedPlan.CanMaterialize
+            ? $"{persistedDuplicateMaterializedPlan.Plan.Operations.Count:N0} ops in materialized review plan"
+            : persistedDuplicateMaterializedPlan.DegradedReasons.Count > 0
+                ? "Materialization blocked behind trust or policy"
+                : "No materialized retained cleanup plan yet";
+
+    private string FormatDuplicatePromotedPlanTitle() =>
+        persistedDuplicatePromotedPlan.Promoted
+            ? persistedDuplicatePromotedPlan.IsNewlyPromoted
+                ? "Retained cleanup plan saved to history"
+                : "Retained cleanup plan already exists in history"
+            : persistedDuplicatePromotedPlan.DegradedReasons.Count > 0
+                ? "Promotion blocked behind trust or policy"
+                : "Retained cleanup plan not promoted yet";
 
     private string BuildDuplicateCleanupPreviewDetail()
     {
@@ -2127,6 +3021,174 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         return $"{posture}{canonicalDetail}{blockedDetail}{notesDetail}";
     }
 
+    private string BuildDuplicateCleanupPlanDetail()
+    {
+        if (!persistedDuplicateCleanupPlanPreview.Found)
+        {
+            return "Cleanup plan preview is not available yet.";
+        }
+
+        var threshold = persistedDuplicateCleanupPlanPreview.ConfidenceThresholdUsed <= 0
+            ? profile.DuplicateAutoDeleteConfidenceThreshold
+            : persistedDuplicateCleanupPlanPreview.ConfidenceThresholdUsed;
+
+        var inclusionDetail = persistedDuplicateCleanupPlanPreview.IncludedGroupCount > 0
+            ? $"{persistedDuplicateCleanupPlanPreview.IncludedGroupCount:N0} groups are included under the current {threshold:P0} threshold."
+            : $"No groups are included under the current {threshold:P0} threshold.";
+
+        var blockedDetail = persistedDuplicateCleanupPlanPreview.BlockedGroupCount == 0
+            ? string.Empty
+            : $" {persistedDuplicateCleanupPlanPreview.BlockedGroupCount:N0} groups remain blocked.";
+
+        var rationale = string.IsNullOrWhiteSpace(persistedDuplicateCleanupPlanPreview.Rationale)
+            ? string.Empty
+            : $" Rationale: {persistedDuplicateCleanupPlanPreview.Rationale}";
+
+        var rollback = string.IsNullOrWhiteSpace(persistedDuplicateCleanupPlanPreview.RollbackPosture)
+            ? string.Empty
+            : $" Rollback: {persistedDuplicateCleanupPlanPreview.RollbackPosture}";
+
+        return $"{inclusionDetail}{blockedDetail}{rationale}{rollback}";
+    }
+
+    private string BuildDuplicateMaterializedPlanDetail()
+    {
+        if (!persistedDuplicateMaterializedPlan.Found)
+        {
+            return "Materialized retained cleanup plan is not available yet.";
+        }
+
+        if (!persistedDuplicateMaterializedPlan.CanMaterialize)
+        {
+            var degraded = persistedDuplicateMaterializedPlan.DegradedReasons
+                .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+                .Take(3)
+                .ToList();
+
+            return degraded.Count == 0
+                ? "Atlas could not materialize a retained cleanup plan under the current trust and policy posture."
+                : $"Atlas could not materialize a retained cleanup plan. Blocked by: {string.Join("; ", degraded)}.";
+        }
+
+        var threshold = persistedDuplicateMaterializedPlan.ConfidenceThresholdUsed <= 0
+            ? profile.DuplicateAutoDeleteConfidenceThreshold
+            : persistedDuplicateMaterializedPlan.ConfidenceThresholdUsed;
+
+        var rationale = string.IsNullOrWhiteSpace(persistedDuplicateMaterializedPlan.Rationale)
+            ? string.Empty
+            : $" Rationale: {persistedDuplicateMaterializedPlan.Rationale}";
+
+        var rollback = string.IsNullOrWhiteSpace(persistedDuplicateMaterializedPlan.RollbackPosture)
+            ? string.Empty
+            : $" Rollback: {persistedDuplicateMaterializedPlan.RollbackPosture}";
+
+        return $"{persistedDuplicateMaterializedPlan.IncludedGroupCount:N0} groups materialized into a standard review plan with {persistedDuplicateMaterializedPlan.TotalPlannedOperations:N0} operations under the current {threshold:P0} threshold.{rationale}{rollback}";
+    }
+
+    private string BuildDuplicatePromotedPlanDetail()
+    {
+        if (!persistedDuplicatePromotedPlan.Found)
+        {
+            return "Retained cleanup plan promotion has not been attempted yet.";
+        }
+
+        if (!persistedDuplicatePromotedPlan.Promoted)
+        {
+            var degraded = persistedDuplicatePromotedPlan.DegradedReasons
+                .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+                .Take(3)
+                .ToList();
+
+            return degraded.Count == 0
+                ? "Atlas could not save the retained cleanup plan into standard plan history."
+                : $"Atlas could not save the retained cleanup plan. Blocked by: {string.Join("; ", degraded)}.";
+        }
+
+        var threshold = persistedDuplicatePromotedPlan.ConfidenceThresholdUsed <= 0
+            ? profile.DuplicateAutoDeleteConfidenceThreshold
+            : persistedDuplicatePromotedPlan.ConfidenceThresholdUsed;
+        var categories = persistedDuplicatePromotedPlan.Categories
+            .Where(static category => !string.IsNullOrWhiteSpace(category))
+            .Take(3)
+            .ToList();
+        var categoryDetail = categories.Count == 0
+            ? string.Empty
+            : $" Categories: {string.Join(", ", categories)}.";
+
+        return $"{persistedDuplicatePromotedPlan.IncludedGroupCount:N0} included groups and {persistedDuplicatePromotedPlan.TotalPlannedOperations:N0} operations were saved under the current {threshold:P0} threshold as {persistedDuplicatePromotedPlan.SavedPlanId}.{categoryDetail} Source session: {persistedDuplicatePromotedPlan.SourceSessionId}.";
+    }
+
+    private string BuildRetainedCleanupPlanLifecycleValue()
+    {
+        if (persistedDuplicatePromotedPlan.Promoted)
+        {
+            return persistedDuplicatePromotedPlan.IsNewlyPromoted ? "Saved" : "Reused";
+        }
+
+        if (persistedDuplicatePromotedPlan.Found)
+        {
+            return "Blocked";
+        }
+
+        if (persistedDuplicateMaterializedPlan.CanMaterialize)
+        {
+            return "Ready to save";
+        }
+
+        if (persistedDuplicateCleanupPlanPreview.Found
+            && persistedDuplicateCleanupPlanPreview.IncludedGroupCount > 0)
+        {
+            return "Preview ready";
+        }
+
+        return IsLiveMode ? "Awaiting review" : "Preview only";
+    }
+
+    private string BuildRetainedCleanupPlanLifecycleDetail()
+    {
+        if (persistedDuplicatePromotedPlan.Promoted)
+        {
+            var planIdDetail = string.IsNullOrWhiteSpace(persistedDuplicatePromotedPlan.SavedPlanId)
+                ? "into stored plan history"
+                : $"as {persistedDuplicatePromotedPlan.SavedPlanId}";
+            var sourceDetail = string.IsNullOrWhiteSpace(persistedDuplicatePromotedPlan.SourceSessionId)
+                ? string.Empty
+                : $" from retained session {ShortId(persistedDuplicatePromotedPlan.SourceSessionId)}";
+            var scopeDetail = string.IsNullOrWhiteSpace(persistedDuplicatePromotedPlan.Scope)
+                ? string.Empty
+                : $" Scope: {persistedDuplicatePromotedPlan.Scope}.";
+
+            return persistedDuplicatePromotedPlan.IsNewlyPromoted
+                ? $"{persistedDuplicatePromotedPlan.IncludedGroupCount:N0} retained duplicate groups were saved {planIdDetail}{sourceDetail}.{scopeDetail} {persistedDuplicatePromotedPlan.RollbackPosture}".Trim()
+                : $"Atlas reused saved retained cleanup plan {planIdDetail}{sourceDetail}.{scopeDetail}".Trim();
+        }
+
+        if (persistedDuplicatePromotedPlan.Found)
+        {
+            var degradedReason = persistedDuplicatePromotedPlan.DegradedReasons
+                .FirstOrDefault(static reason => !string.IsNullOrWhiteSpace(reason));
+
+            return string.IsNullOrWhiteSpace(degradedReason)
+                ? "Atlas could not save the retained cleanup plan into standard plan history under the current trust and policy posture."
+                : $"Atlas could not save the retained cleanup plan because {degradedReason}.";
+        }
+
+        if (persistedDuplicateMaterializedPlan.CanMaterialize)
+        {
+            return $"{persistedDuplicateMaterializedPlan.IncludedGroupCount:N0} retained duplicate groups are already materialized into review. Save this staged plan when you want it to become durable plan history.";
+        }
+
+        if (persistedDuplicateCleanupPlanPreview.Found
+            && persistedDuplicateCleanupPlanPreview.IncludedGroupCount > 0)
+        {
+            return $"{persistedDuplicateCleanupPlanPreview.IncludedGroupCount:N0} retained duplicate groups are previewable under the current threshold, but Atlas has not materialized or saved that plan yet.";
+        }
+
+        return IsLiveMode
+            ? "Atlas has not reached the retained cleanup plan lifecycle yet."
+            : "Retained cleanup plan lifecycle stays unavailable while the shell is in preview mode.";
+    }
+
     private string BuildDuplicateCleanupOperationDetail()
     {
         var sample = persistedDuplicateCleanupPreview.Operations
@@ -2149,6 +3211,185 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             : string.Join(" | ", sample);
     }
 
+    private string BuildMaterializedDuplicatePlanSessionSummary()
+    {
+        if (!persistedDuplicateMaterializedPlan.CanMaterialize)
+        {
+            return "Retained duplicate cleanup plan could not be materialized.";
+        }
+
+        return $"{persistedDuplicateMaterializedPlan.IncludedGroupCount:N0} retained duplicate groups materialized into {persistedDuplicateMaterializedPlan.Plan.Operations.Count:N0} reversible quarantine operations.";
+    }
+
+    private static string BuildPromotedDuplicateCleanupPlanSummary(PromoteDuplicateCleanupPlanResponse response)
+    {
+        if (!response.Promoted)
+        {
+            return "Retained duplicate cleanup plan could not be saved to history.";
+        }
+
+        return response.IsNewlyPromoted
+            ? $"{response.IncludedGroupCount:N0} retained duplicate groups were saved into plan history as {response.SavedPlanId}."
+            : $"Atlas reused retained duplicate cleanup plan {response.SavedPlanId} from plan history.";
+    }
+
+    private OptimizationFinding? GetLeadSafeOptimizationFinding() =>
+        currentOptimization.Findings.FirstOrDefault(finding => finding.CanAutoFix && !finding.RequiresApproval)
+        ?? currentOptimization.Findings.FirstOrDefault(static finding => finding.CanAutoFix)
+        ?? currentOptimization.Findings.FirstOrDefault();
+
+    private OptimizationFinding? GetLeadAutoApplicableOptimizationFinding() =>
+        currentOptimization.Findings.FirstOrDefault(finding =>
+            finding.CanAutoFix
+            && SafeOptimizationKinds.Contains(finding.Kind)
+            && !string.IsNullOrWhiteSpace(finding.FindingId));
+
+    private OptimizationFixPreviewResponse BuildPreviewOptimizationFixResponse(OptimizationFinding finding) =>
+        new()
+        {
+            Found = true,
+            FindingId = finding.FindingId,
+            Kind = finding.Kind,
+            Target = finding.Target,
+            IsSafeKind = SafeOptimizationKinds.Contains(finding.Kind),
+            CanAutoFix = finding.CanAutoFix,
+            RequiresApproval = finding.RequiresApproval,
+            RollbackPlan = finding.RollbackPlan,
+            Reason = finding.CanAutoFix
+                ? "Preview-only posture. The service is still required before Atlas can touch the machine."
+                : "This finding is recommendation-only and cannot be auto-applied in preview mode."
+        };
+
+    private static string BuildOptimizationFixPreviewSummary(OptimizationFixPreviewResponse response, bool isPreviewOnly)
+    {
+        if (!response.Found)
+        {
+            return "Atlas could not load a lead safe-fix preview from the current optimization findings.";
+        }
+
+        var mode = isPreviewOnly ? "Preview-only" : "Service-backed";
+        var safety = response.IsSafeKind ? "safe kind" : "unsupported kind";
+        var posture = response.CanAutoFix
+            ? response.RequiresApproval ? "approval-gated" : "auto-fix ready"
+            : "recommendation-only";
+
+        var rollback = string.IsNullOrWhiteSpace(response.RollbackPlan)
+            ? "Rollback detail is not available yet."
+            : response.RollbackPlan;
+
+        return $"{mode} {FormatOptimizationKind(response.Kind).ToLowerInvariant()} preview for {ShortPath(response.Target)} is in the {safety} lane and currently {posture}. {rollback}";
+    }
+
+    private string BuildCheckpointDetailSummaryText()
+    {
+        if (!persistedCheckpointDetail.Found)
+        {
+            return "Checkpoint detail could not be loaded from the service.";
+        }
+
+        var snapshotPosture = persistedCheckpointDetail.VssSnapshotCreated
+            ? "VSS snapshot created"
+            : persistedCheckpointDetail.VssSnapshotReferences.Count > 0
+                ? $"{persistedCheckpointDetail.VssSnapshotReferences.Count:N0} snapshot references retained"
+                : "No VSS snapshot retained";
+
+        var coveredVolumes = persistedCheckpointDetail.CoveredVolumes.Count == 0
+            ? "No covered volumes reported"
+            : $"{persistedCheckpointDetail.CoveredVolumes.Count:N0} covered volumes";
+
+        return $"{FormatCheckpointEligibilityLabel(persistedCheckpointDetail.CheckpointEligibility)}. {snapshotPosture}. {coveredVolumes}. {persistedCheckpointDetail.OptimizationRollbackStateCount:N0} optimization rollback states. Captured {FormatHistoryTimestamp(persistedCheckpointDetail.CreatedUtc)}.";
+    }
+
+    private void OnInsightPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(OptimizationAutoFixReadyCount));
+        OnPropertyChanged(nameof(OptimizationApprovalGateCount));
+        OnPropertyChanged(nameof(OptimizationRecommendationOnlyCount));
+        OnPropertyChanged(nameof(OptimizationAutoFixPercent));
+        OnPropertyChanged(nameof(OptimizationApprovalPercent));
+        OnPropertyChanged(nameof(OptimizationRecommendationPercent));
+        OnPropertyChanged(nameof(OptimizationActionMixText));
+        OnPropertyChanged(nameof(RecoveryInverseAssetCount));
+        OnPropertyChanged(nameof(RecoveryQuarantineAssetCount));
+        OnPropertyChanged(nameof(RecoveryOptimizationRollbackCount));
+        OnPropertyChanged(nameof(RecoveryInverseAssetPercent));
+        OnPropertyChanged(nameof(RecoveryQuarantineAssetPercent));
+        OnPropertyChanged(nameof(RecoveryOptimizationRollbackPercent));
+        OnPropertyChanged(nameof(RecoveryAssetMixText));
+        OnPropertyChanged(nameof(StoredPromotedPlanCount));
+        OnPropertyChanged(nameof(StoredSessionLinkedPlanCount));
+        OnPropertyChanged(nameof(StoredStandalonePlanCount));
+        OnPropertyChanged(nameof(StoredPromotedPlanPercent));
+        OnPropertyChanged(nameof(StoredSessionLinkedPlanPercent));
+        OnPropertyChanged(nameof(StoredStandalonePlanPercent));
+        OnPropertyChanged(nameof(StoredPlanSourceMixText));
+    }
+
+    private static double ComputePercent(int part, int total) =>
+        total <= 0 ? 0d : Math.Round((double)part / total * 100d, 1);
+
+    private static bool IsRetainedDuplicatePlanSource(string? source) =>
+        string.Equals(source?.Trim(), "DuplicateCleanupPromotion", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatCheckpointEligibilityLabel(string value) =>
+        value.Trim() switch
+        {
+            "Required" => "Checkpoint required",
+            "Recommended" => "Checkpoint recommended",
+            "NotNeeded" => "Checkpoint not needed",
+            "" => "Eligibility unknown",
+            _ => value
+        };
+
+    private string BuildCheckpointEligibilityNote()
+    {
+        var reason = string.IsNullOrWhiteSpace(latestCheckpoint.EligibilityReason)
+            ? "No detailed checkpoint reason was retained."
+            : latestCheckpoint.EligibilityReason;
+
+        var coverage = latestCheckpoint.CoveredVolumes.Count == 0
+            ? string.Empty
+            : $" Covered volumes: {string.Join(", ", latestCheckpoint.CoveredVolumes.Select(ShortPath))}.";
+
+        var snapshot = latestCheckpoint.VssSnapshotCreated
+            ? " VSS coverage was created for this checkpoint."
+            : latestCheckpoint.VssSnapshotReferences.Count > 0
+                ? " Snapshot references were retained for this checkpoint."
+                : " Atlas is still relying on journal and quarantine coverage for this checkpoint.";
+
+        return $"{reason}{coverage}{snapshot}";
+    }
+
+    private string BuildDuplicateCleanupPlanIncludedGroupDetail()
+    {
+        var sample = persistedDuplicateCleanupPlanPreview.IncludedGroups
+            .Take(3)
+            .Select(group => $"{ShortPath(group.CanonicalPath)} -> {group.OperationCount:N0} ops at {group.CleanupConfidence:P0}")
+            .ToList();
+
+        return sample.Count == 0
+            ? "No included groups were returned."
+            : string.Join(" | ", sample);
+    }
+
+    private string BuildDuplicateCleanupPlanBlockedGroupDetail()
+    {
+        var sample = persistedDuplicateCleanupPlanPreview.BlockedGroups
+            .Take(3)
+            .Select(group =>
+            {
+                var reason = group.BlockedReasons.FirstOrDefault(static item => !string.IsNullOrWhiteSpace(item));
+                return string.IsNullOrWhiteSpace(reason)
+                    ? $"{ShortPath(group.CanonicalPath)} -> {FormatPlanBlockedGroupPostureLabel(group)}"
+                    : $"{ShortPath(group.CanonicalPath)} -> {reason}";
+            })
+            .ToList();
+
+        return sample.Count == 0
+            ? "No blocked groups were returned."
+            : string.Join(" | ", sample);
+    }
+
     private static string FormatBatchGroupPostureLabel(BatchGroupPreviewSummary group) =>
         group.RecommendedPosture switch
         {
@@ -2156,6 +3397,14 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             DuplicateActionPosture.QuarantineDuplicates => "Atlas still recommends quarantine posture, but the group is blocked from preview under current policy",
             DuplicateActionPosture.Review => "Atlas keeps this group in review before any cleanup preview becomes actionable",
             _ => "Atlas would keep only the canonical path and avoid staging duplicate cleanup"
+        };
+
+    private static string FormatPlanBlockedGroupPostureLabel(PlanPreviewBlockedGroup group) =>
+        group.RecommendedPosture switch
+        {
+            DuplicateActionPosture.QuarantineDuplicates => "Atlas still recommends cleanup posture, but the group remains blocked",
+            DuplicateActionPosture.Review => "Atlas keeps this group in review before it can enter the cleanup plan",
+            _ => "Atlas keeps only the canonical path and leaves this group out of the cleanup plan"
         };
 
     private static string BuildDuplicateEvidenceDetail(IEnumerable<DuplicateEvidenceSummary> evidence)
@@ -2410,6 +3659,13 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         return DateTimeOffset.TryParse(timestamp, out var parsed)
             ? parsed.LocalDateTime.ToString("g")
             : "Recently";
+    }
+
+    private static string FormatConversationCoverage(string fromUtc, string untilUtc)
+    {
+        var fromText = FormatHistoryTimestamp(fromUtc);
+        var untilText = FormatHistoryTimestamp(untilUtc);
+        return $"{fromText} to {untilText}";
     }
 
     private static string FormatUnixTimestamp(long unixTimeSeconds)
@@ -2703,6 +3959,18 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             ? "No safe optimization pressure is active right now."
             : $"{autoFixReadyCount:N0} auto-fix ready, {approvalCount:N0} approval-gated, {manualCount:N0} recommendation-only across {kindSummary}.";
 
+        if (currentOptimization.Findings.Count == 0 && string.IsNullOrWhiteSpace(lastOptimizationExecutionRecordId))
+        {
+            OptimizationFixSummaryText = "No lead safe-fix candidate is available right now.";
+        }
+        else if (currentOptimization.Findings.Count > 0 && string.IsNullOrWhiteSpace(lastOptimizationExecutionRecordId) && !optimizationFixPreview.Found)
+        {
+            var leadFinding = GetLeadSafeOptimizationFinding();
+            OptimizationFixSummaryText = leadFinding is null
+                ? "Atlas can analyze optimization pressure, but it does not yet have a lead safe-fix candidate."
+                : $"Lead safe-fix candidate: {FormatOptimizationKind(leadFinding.Kind)} on {ShortPath(leadFinding.Target)}.";
+        }
+
         ReplaceAll(OptimizationMetrics,
         [
             new AtlasMetricCard("AUTO-FIX READY", $"{autoFixReadyCount:N0}", "Curated low-risk fixes Atlas could apply without another approval stop."),
@@ -2710,7 +3978,10 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             new AtlasMetricCard("RECOMMENDATION ONLY", $"{manualCount:N0}", "Signals Atlas will explain but not auto-apply.")
         ]);
 
+        OnInsightPropertiesChanged();
         OnPropertyChanged(nameof(HasOptimizationFindings));
+        OnPropertyChanged(nameof(CanPreviewOptimizationFix));
+        OnPropertyChanged(nameof(CanApplyOptimizationFix));
         ApplyScanState();
     }
 
@@ -2738,6 +4009,7 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
         RefreshUndoSignals();
         RefreshHistoryMetrics();
 
+        OnInsightPropertiesChanged();
         OnPropertyChanged(nameof(HasUndoCheckpoint));
         OnPropertyChanged(nameof(CanPreviewUndo));
         OnPropertyChanged(nameof(CanExecuteUndo));
@@ -3884,6 +5156,12 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
     private void RefreshHistoryMetrics()
     {
+        var promotedPlanCount = persistedHistory.RecentPlans.Count(static plan =>
+            string.Equals(plan.Source, "DuplicateCleanupPromotion", StringComparison.OrdinalIgnoreCase));
+        var conversationSummaryCount = persistedConversationSnapshot.TotalSummaryCount > 0
+            ? persistedConversationSnapshot.TotalSummaryCount
+            : persistedConversationSummaries.TotalCount;
+
         ReplaceAll(HistoryMetrics,
         [
             new AtlasMetricCard("SESSION EVENTS", $"{ActivityFeed.Count:N0}", "Recent actions and outcomes Atlas has tracked in this shell session."),
@@ -3896,7 +5174,14 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 ? "Retained duplicate review groups are available from the latest stored session."
                 : "No retained duplicate groups are available yet."),
             new AtlasMetricCard("STORED PLANS", $"{persistedHistory.RecentPlans.Count:N0}", "Recent persisted plans returned by the service history snapshot."),
+            new AtlasMetricCard("PROMOTED PLANS", $"{promotedPlanCount:N0}", promotedPlanCount > 0
+                ? "Saved plans promoted from retained duplicate cleanup are visible in stored history."
+                : "No retained-cleanup promoted plans are visible in stored history yet."),
+            new AtlasMetricCard("PLAN LIFECYCLE", BuildRetainedCleanupPlanLifecycleValue(), BuildRetainedCleanupPlanLifecycleDetail()),
             new AtlasMetricCard("STORED TRACES", $"{persistedHistory.RecentTraces.Count:N0}", "Recent planning or voice traces retained in service-backed memory."),
+            new AtlasMetricCard("CONVO SUMMARIES", $"{conversationSummaryCount:N0}", conversationSummaryCount > 0
+                ? "Compacted conversation windows are available from the service conversation memory lane."
+                : "No compacted conversation summaries are available yet."),
             new AtlasMetricCard("SERVICE MODE", IsLiveMode ? "Live" : "Preview", IsLiveMode
                 ? "The service is reachable, so persisted history can grow beyond the current shell session."
                 : "The shell is still simulating safely while the privileged service remains offline.")
@@ -4022,6 +5307,8 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
                 : riskyDuplicateGroups > 0
                     ? $"{riskyDuplicateGroups:N0} duplicate groups carry sensitive, sync-managed, or protected membership. Lead canonical {ShortPath(leadDuplicatePath)} stays favored because {leadDuplicateReason}."
                     : $"{highConfidenceDuplicateGroups:N0} duplicate groups currently meet the cleanup-confidence threshold. Lead canonical {ShortPath(leadDuplicatePath)} stays favored because {leadDuplicateReason} with match confidence {(leadDuplicateMatchConfidence ?? 0d):P1}.";
+        var planLifecycleValue = BuildRetainedCleanupPlanLifecycleValue();
+        var planLifecycleDetail = BuildRetainedCleanupPlanLifecycleDetail();
 
         ReplaceAll(PlanSignals,
         [
@@ -4031,7 +5318,8 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             new AtlasSignalCard("REVERSIBILITY", reversibilityValue, reversibilityDetail),
             new AtlasSignalCard("SENSITIVITY", sensitivityValue, sensitivityDetail),
             new AtlasSignalCard("EVIDENCE BASIS", evidenceValue, evidenceDetail),
-            new AtlasSignalCard("DUPLICATE EVIDENCE", duplicateEvidenceValue, duplicateEvidenceDetail)
+            new AtlasSignalCard("DUPLICATE EVIDENCE", duplicateEvidenceValue, duplicateEvidenceDetail),
+            new AtlasSignalCard("PLAN LIFECYCLE", planLifecycleValue, planLifecycleDetail)
         ]);
 
         ReplaceAll(PlanBlockedReasons, risk.BlockedReasons.Count == 0
@@ -4041,14 +5329,19 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
     private void RefreshUndoSignals()
     {
+        var checkpointRequired = string.Equals(latestCheckpoint.CheckpointEligibility, "Required", StringComparison.OrdinalIgnoreCase);
         var recoveryMode = !IsLiveMode
             ? "Preview only"
-            : CanExecuteUndo
+            : checkpointRequired && !latestCheckpoint.VssSnapshotCreated && latestCheckpoint.VssSnapshotReferences.Count == 0
+                ? "Awaiting VSS"
+                : CanExecuteUndo
                 ? "Service armed"
                 : "Awaiting checkpoint";
 
         var recoveryModeDetail = !IsLiveMode
             ? "Atlas can explain the rollback path locally, but the service is still required to replay inverse operations."
+            : checkpointRequired && !latestCheckpoint.VssSnapshotCreated && latestCheckpoint.VssSnapshotReferences.Count == 0
+                ? "This checkpoint was marked as requiring heavyweight coverage, but Atlas has not yet recorded a VSS-backed snapshot for it."
             : CanExecuteUndo
                 ? "The latest checkpoint can be replayed through the service if the user approves the rollback."
                 : "Atlas does not yet have enough checkpoint data to ask the service for a real rollback.";
@@ -4063,13 +5356,17 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
 
         var checkpointValue = latestCheckpoint.VssSnapshotReferences.Count > 0
             ? "Snapshot-backed"
+            : !string.IsNullOrWhiteSpace(latestCheckpoint.CheckpointEligibility)
+                ? FormatCheckpointEligibilityLabel(latestCheckpoint.CheckpointEligibility)
             : latestCheckpoint.InverseOperations.Count > 0 || latestCheckpoint.QuarantineItems.Count > 0
                 ? "Journal-backed"
                 : "No checkpoint";
 
         var checkpointDetail = latestCheckpoint.VssSnapshotReferences.Count > 0
             ? $"{latestCheckpoint.VssSnapshotReferences.Count:N0} heavyweight snapshot references accompany the normal undo journal."
-            : "Atlas is currently relying on inverse operations, quarantine items, and checkpoint notes rather than VSS snapshots.";
+            : !string.IsNullOrWhiteSpace(latestCheckpoint.CheckpointEligibility)
+                ? BuildCheckpointEligibilityNote()
+                : "Atlas is currently relying on inverse operations, quarantine items, and checkpoint notes rather than VSS snapshots.";
 
         var restoreConfidenceValue = latestCheckpoint.QuarantineItems.Count > 0
             ? "File restore ready"
@@ -4081,11 +5378,22 @@ public sealed class AtlasShellSession : INotifyPropertyChanged
             ? string.Join(" ", latestCheckpoint.Notes)
             : "Atlas will surface recovery notes here once a dry run or live execution has produced checkpoint commentary.";
 
+        var optimizationRollbackValue = latestCheckpoint.OptimizationRollbackStates.Count == 0
+            ? "No fix rollback"
+            : $"{latestCheckpoint.OptimizationRollbackStates.Count:N0} staged";
+
+        var optimizationRollbackDetail = latestCheckpoint.OptimizationRollbackStates.Count == 0
+            ? "No optimization-specific rollback states were retained for the latest checkpoint."
+            : string.Join(" ", latestCheckpoint.OptimizationRollbackStates
+                .Take(3)
+                .Select(state => $"{state.Kind}: {(state.IsReversible ? "reversible" : "non-reversible")} at {ShortPath(state.Target)}."));
+
         ReplaceAll(UndoSignals,
         [
             new AtlasSignalCard("RECOVERY MODE", recoveryMode, recoveryModeDetail),
             new AtlasSignalCard("RESTORE COVERAGE", coverageValue, coverageDetail),
             new AtlasSignalCard("CHECKPOINT DEPTH", checkpointValue, checkpointDetail),
+            new AtlasSignalCard("OPT FIX ROLLBACK", optimizationRollbackValue, optimizationRollbackDetail),
             new AtlasSignalCard("RECOVERY NOTES", restoreConfidenceValue, restoreConfidenceDetail)
         ]);
     }

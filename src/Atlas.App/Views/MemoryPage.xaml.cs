@@ -20,6 +20,9 @@ public sealed partial class MemoryPage : Page
     private async void OnRunScanClick(object sender, RoutedEventArgs e) =>
         await Session.RunScanAsync();
 
+    private async void OnPromoteCleanupPlanClick(object sender, RoutedEventArgs e) =>
+        await Session.PromoteRetainedCleanupPlanAsync();
+
     private async void OnPreviewUndoClick(object sender, RoutedEventArgs e) =>
         await Session.PreviewUndoAsync();
 }

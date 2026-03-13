@@ -12,12 +12,16 @@
 ## What Codex App Owns
 - WinUI project, visual system, motion, interaction design, XAML implementation, shell orchestration, restore/build/run verification, and the final UX shape of plan review, optimization, undo, and command-center flows
 - Current Codex lane includes the WinUI shell plus shared-core duplicate intelligence, AI/planning projection work, AI privacy/safety guards, preview/runtime parity work, and safe optimization breadth so scanner truth can feed deterministic planning and review surfaces cleanly
-- Current next Codex lane is retained duplicate cleanup preview integration and shell stabilization: wire `C-027` cleanup-preview truth into the current Memory / Plan Review duplicate drill-in, keep the new Memory route stable after the navigation crash fix, and continue the responsive page refactor across the shell
+- Current Codex lane is now app-side integration of the recent backend wave plus shell refinement: surface `C-032` source-aware saved plans, `C-033` checkpoint/VSS posture, and `C-034` optimization rollback truth in the existing mission-control UI while keeping the shell stable across 1080p and wider layouts
 
 ## What Claude Code Can Own In Parallel
 - Backend-heavy implementation packets for service/runtime work that do not touch `src/Atlas.App/**`
 - Storage repositories, service hardening, installer/service registration, AI contract enforcement, deeper scanner/file-understanding work, sensitivity intelligence, duplicate evidence/confidence work, tests, eval cases, red-team datasets, installer/recovery research, prompt/risk docs, and markdown-first coordination work
-- Current next Claude lane is duplicate cleanup plan preview APIs: expose deterministic, read-only retained-session duplicate cleanup plan preview using the existing cleanup planner and batch preview logic without touching `src/Atlas.App/**`
+- Current Claude lane is now the next backend wave after the completed `C-040` to `C-043` pass:
+  - `C-044` optimization execution history query APIs
+  - `C-045` VSS restore request and fallback APIs
+  - `C-046` optimization batch apply preview and session summary
+  - `C-047` conversation summary filters and drill-in
 - Claude should avoid editing `src/Atlas.App/` UI files unless a packet explicitly says otherwise
 - Claude should use `.planning/claude/CLAUDE-INBOX.md` and `.planning/claude/CLAUDE-OUTBOX.md` as the primary coordination channel
 

@@ -14,6 +14,9 @@ public sealed partial class PlansPage : Page
         DataContext = Session;
     }
 
+    private async void OnPromoteCleanupPlanClick(object sender, RoutedEventArgs e) =>
+        await Session.PromoteRetainedCleanupPlanAsync();
+
     private async void OnPreviewExecutionClick(object sender, RoutedEventArgs e) =>
         await Session.PreviewExecutionAsync();
 

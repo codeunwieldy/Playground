@@ -11,7 +11,10 @@ public sealed class PlanExecutionService(
     AtlasPolicyEngine policyEngine,
     RollbackPlanner rollbackPlanner,
     IOptions<AtlasServiceOptions> serviceOptions,
-    IInventoryRepository inventoryRepository)
+    IInventoryRepository inventoryRepository,
+    SafeOptimizationFixExecutor optimizationFixExecutor,
+    VssSnapshotOrchestrator vssSnapshotOrchestrator,
+    IOptimizationRepository optimizationRepository)
 {
     private static readonly int[] OperationOrder =
     [
@@ -27,24 +30,24 @@ public sealed class PlanExecutionService(
 
     public async Task<ExecutionResponse> ExecuteAsync(ExecutionRequest request, CancellationToken cancellationToken)
     {
+        // Determine trust posture from the latest inventory session.
+        var latestSession = await inventoryRepository.GetLatestSessionAsync(cancellationToken);
+        var isTrustedSession = latestSession is null || latestSession.IsTrusted;
+
         // Trust gate: block live execution when the latest inventory session is degraded.
         // Preview/dry-run always remains available.
-        if (request.Execute)
+        if (request.Execute && !isTrustedSession)
         {
-            var latestSession = await inventoryRepository.GetLatestSessionAsync(cancellationToken);
-            if (latestSession is not null && !latestSession.IsTrusted)
+            return new ExecutionResponse
             {
-                return new ExecutionResponse
-                {
-                    Success = false,
-                    Messages =
-                    [
-                        "Execution blocked: retained inventory session is degraded (IsTrusted=false). " +
-                        "Preview/dry-run remains available. " +
-                        "Run a full rescan to restore trusted state before executing."
-                    ]
-                };
-            }
+                Success = false,
+                Messages =
+                [
+                    "Execution blocked: retained inventory session is degraded (IsTrusted=false). " +
+                    "Preview/dry-run remains available. " +
+                    "Run a full rescan to restore trusted state before executing."
+                ]
+            };
         }
 
         var validation = policyEngine.ValidatePlan(request.PolicyProfile, new PlanGraph
@@ -77,10 +80,37 @@ public sealed class PlanExecutionService(
             };
         }
 
+        // Evaluate checkpoint eligibility (deterministic, always runs including dry-run).
+        var eligibility = CheckpointEligibilityEvaluator.Evaluate(request.Batch, isTrustedSession);
+
+        // Attempt VSS snapshot creation for eligible batches (C-036).
+        var vssResult = vssSnapshotOrchestrator.TryCreateSnapshots(
+            eligibility.Requirement,
+            eligibility.CoveredVolumes,
+            !request.Execute);
+
+        // Required checkpoint + VSS failure → block live execution.
+        if (eligibility.Requirement == CheckpointRequirement.Required
+            && request.Execute
+            && !vssResult.Success
+            && vssResult.Status != VssSnapshotStatus.NotNeeded
+            && vssResult.Status != VssSnapshotStatus.Skipped)
+        {
+            return new ExecutionResponse
+            {
+                Success = false,
+                Messages =
+                [
+                    $"Execution blocked: VSS checkpoint was required but creation failed. {vssResult.Message}"
+                ]
+            };
+        }
+
         // Sort operations into safe deterministic order.
         var ordered = OrderOperations(request.Batch.Operations);
 
         var quarantineItems = new List<QuarantineItem>();
+        var optimizationRollbackStates = new List<OptimizationRollbackState>();
         var messages = new List<string>();
         var completedOperations = new List<PlanOperation>();
 
@@ -89,7 +119,7 @@ public sealed class PlanExecutionService(
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                ExecuteOperation(operation, request.Execute, request.Batch.PlanId, quarantineItems, messages);
+                ExecuteOperation(operation, request.Execute, request.Batch.PlanId, quarantineItems, optimizationRollbackStates, messages);
                 completedOperations.Add(operation);
             }
             catch (Exception ex)
@@ -109,7 +139,9 @@ public sealed class PlanExecutionService(
                 };
 
                 var partialCheckpoint = rollbackPlanner.BuildCheckpoint(partialBatch, quarantineItems);
+                partialCheckpoint.OptimizationRollbackStates.AddRange(optimizationRollbackStates);
                 partialCheckpoint.Notes.Add($"Partial failure: {completedOperations.Count} of {ordered.Count} operations completed before error.");
+                PopulateCheckpointEligibility(partialCheckpoint, eligibility, request.Execute, vssResult);
 
                 return new ExecutionResponse
                 {
@@ -121,6 +153,8 @@ public sealed class PlanExecutionService(
         }
 
         var checkpoint = rollbackPlanner.BuildCheckpoint(request.Batch, quarantineItems);
+        checkpoint.OptimizationRollbackStates.AddRange(optimizationRollbackStates);
+        PopulateCheckpointEligibility(checkpoint, eligibility, request.Execute, vssResult);
         return new ExecutionResponse
         {
             Success = true,
@@ -154,7 +188,7 @@ public sealed class PlanExecutionService(
                     messages.Add(inverse.Description);
                     break;
                 case OperationKind.RevertOptimizationFix:
-                    messages.Add($"Manual optimization rollback required for {inverse.SourcePath}.");
+                    RevertOptimizationFromCheckpoint(inverse, request.Checkpoint.OptimizationRollbackStates, messages);
                     break;
             }
         }
@@ -287,7 +321,40 @@ public sealed class PlanExecutionService(
             .ToList();
     }
 
-    private void ExecuteOperation(PlanOperation operation, bool execute, string planId, List<QuarantineItem> quarantineItems, List<string> messages)
+    /// <summary>
+    /// Populates checkpoint eligibility and VSS snapshot metadata on the given UndoCheckpoint.
+    /// </summary>
+    private static void PopulateCheckpointEligibility(UndoCheckpoint checkpoint, CheckpointEligibilityResult eligibility, bool isLiveExecution, VssSnapshotResult vssResult)
+    {
+        checkpoint.CheckpointEligibility = eligibility.Requirement.ToString();
+        checkpoint.EligibilityReason = string.Join(" ", eligibility.Reasons);
+        checkpoint.CoveredVolumes = eligibility.CoveredVolumes;
+
+        // Populate VSS snapshot truth (C-036).
+        checkpoint.VssSnapshotCreated = vssResult.Success && vssResult.References.Count > 0;
+        checkpoint.VssSnapshotReferences = vssResult.References
+            .Select(r => $"{r.Volume}|{r.SnapshotId}|{r.CreatedUtc:o}")
+            .ToList();
+
+        if (vssResult.Status == VssSnapshotStatus.Success)
+        {
+            checkpoint.Notes.Add($"VSS snapshot(s) created for {vssResult.References.Count} volume(s).");
+        }
+        else if (vssResult.Status == VssSnapshotStatus.PartialCoverage)
+        {
+            checkpoint.Notes.Add($"Partial VSS coverage: {vssResult.Message}");
+        }
+        else if (vssResult.Status == VssSnapshotStatus.Unavailable)
+        {
+            checkpoint.Notes.Add($"VSS unavailable: {vssResult.Message}");
+        }
+        else if (vssResult.Status == VssSnapshotStatus.Failed && isLiveExecution)
+        {
+            checkpoint.Notes.Add($"VSS snapshot creation failed: {vssResult.Message}");
+        }
+    }
+
+    private void ExecuteOperation(PlanOperation operation, bool execute, string planId, List<QuarantineItem> quarantineItems, List<OptimizationRollbackState> optimizationRollbackStates, List<string> messages)
     {
         if (!execute)
         {
@@ -317,10 +384,31 @@ public sealed class PlanExecutionService(
                 messages.Add($"Restored {operation.DestinationPath} from quarantine.");
                 break;
             case OperationKind.ApplyOptimizationFix:
-                ApplyOptimizationFix(operation, messages);
+                var fixResult = optimizationFixExecutor.Apply(operation, planId);
+                messages.Add(fixResult.Message);
+                if (fixResult.RollbackState is not null)
+                {
+                    optimizationRollbackStates.Add(fixResult.RollbackState);
+                }
+                PersistExecutionRecord(new OptimizationExecutionRecord
+                {
+                    PlanId = planId,
+                    FixKind = operation.OptimizationKind,
+                    Target = operation.SourcePath,
+                    Action = fixResult.Success ? OptimizationExecutionAction.Applied : OptimizationExecutionAction.Failed,
+                    Success = fixResult.Success,
+                    IsReversible = fixResult.RollbackState?.IsReversible ?? false,
+                    RollbackNote = fixResult.RollbackState?.Description ?? string.Empty,
+                    Message = fixResult.Message,
+                    CreatedUtc = DateTime.UtcNow
+                });
+                if (!fixResult.Success)
+                {
+                    throw new InvalidOperationException(fixResult.Message);
+                }
                 break;
             case OperationKind.RevertOptimizationFix:
-                messages.Add($"Revert optimization for {operation.SourcePath} requires stored state.");
+                RevertOptimizationFix(operation, planId, optimizationRollbackStates, messages);
                 break;
         }
     }
@@ -415,26 +503,94 @@ public sealed class PlanExecutionService(
         }
     }
 
-    private static void ApplyOptimizationFix(PlanOperation operation, List<string> messages)
+    private void RevertOptimizationFix(PlanOperation operation, string planId, List<OptimizationRollbackState> rollbackStates, List<string> messages)
     {
-        if (operation.OptimizationKind == OptimizationKind.TemporaryFiles && Directory.Exists(operation.SourcePath))
-        {
-            foreach (var file in Directory.EnumerateFiles(operation.SourcePath, "*", SearchOption.AllDirectories))
-            {
-                try
-                {
-                    File.Delete(file);
-                }
-                catch
-                {
-                    // Skip locked temp files.
-                }
-            }
+        // Look for a matching rollback state from a previous apply in this batch.
+        var matchingState = rollbackStates.FirstOrDefault(s =>
+            s.Kind == operation.OptimizationKind &&
+            string.Equals(s.Target, operation.SourcePath, StringComparison.OrdinalIgnoreCase));
 
-            messages.Add($"Cleared temporary files under {operation.SourcePath}.");
+        if (matchingState is null)
+        {
+            messages.Add($"No rollback state found for optimization revert on {operation.SourcePath}.");
+            PersistExecutionRecord(new OptimizationExecutionRecord
+            {
+                PlanId = planId,
+                FixKind = operation.OptimizationKind,
+                Target = operation.SourcePath,
+                Action = OptimizationExecutionAction.Failed,
+                Success = false,
+                Message = $"No rollback state found for optimization revert on {operation.SourcePath}.",
+                CreatedUtc = DateTime.UtcNow
+            });
             return;
         }
 
-        messages.Add($"Optimization fix prepared for {operation.SourcePath}, but no direct executor exists yet.");
+        var revertResult = optimizationFixExecutor.Revert(matchingState);
+        messages.Add(revertResult.Message);
+        PersistExecutionRecord(new OptimizationExecutionRecord
+        {
+            PlanId = planId,
+            FixKind = matchingState.Kind,
+            Target = matchingState.Target,
+            Action = revertResult.Success ? OptimizationExecutionAction.Reverted : OptimizationExecutionAction.Failed,
+            Success = revertResult.Success,
+            IsReversible = matchingState.IsReversible,
+            RollbackNote = matchingState.Description,
+            Message = revertResult.Message,
+            CreatedUtc = DateTime.UtcNow
+        });
+    }
+
+    private void RevertOptimizationFromCheckpoint(InverseOperation inverse, List<OptimizationRollbackState> checkpointRollbackStates, List<string> messages)
+    {
+        // Find matching rollback state from the checkpoint.
+        var matchingState = checkpointRollbackStates.FirstOrDefault(s =>
+            string.Equals(s.Target, inverse.SourcePath, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingState is null)
+        {
+            messages.Add($"No stored rollback state for optimization revert on {inverse.SourcePath}.");
+            PersistExecutionRecord(new OptimizationExecutionRecord
+            {
+                FixKind = OptimizationKind.Unknown,
+                Target = inverse.SourcePath,
+                Action = OptimizationExecutionAction.Failed,
+                Success = false,
+                Message = $"No stored rollback state for optimization revert on {inverse.SourcePath}.",
+                CreatedUtc = DateTime.UtcNow
+            });
+            return;
+        }
+
+        var revertResult = optimizationFixExecutor.Revert(matchingState);
+        messages.Add(revertResult.Message);
+        PersistExecutionRecord(new OptimizationExecutionRecord
+        {
+            FixKind = matchingState.Kind,
+            Target = matchingState.Target,
+            Action = revertResult.Success ? OptimizationExecutionAction.Reverted : OptimizationExecutionAction.Failed,
+            Success = revertResult.Success,
+            IsReversible = matchingState.IsReversible,
+            RollbackNote = matchingState.Description,
+            Message = revertResult.Message,
+            CreatedUtc = DateTime.UtcNow
+        });
+    }
+
+    /// <summary>
+    /// Best-effort persistence of an optimization execution record (C-037).
+    /// Failures are silently ignored to avoid blocking the execution pipeline.
+    /// </summary>
+    private void PersistExecutionRecord(OptimizationExecutionRecord record)
+    {
+        try
+        {
+            optimizationRepository.SaveExecutionRecordAsync(record).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Best-effort — execution history must never block the pipeline.
+        }
     }
 }

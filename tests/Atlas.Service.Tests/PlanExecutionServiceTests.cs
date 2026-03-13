@@ -27,7 +27,10 @@ public sealed class PlanExecutionServiceTests : IDisposable
             new AtlasPolicyEngine(),
             new RollbackPlanner(),
             options,
-            new TrustedInventoryStub());
+            new TrustedInventoryStub(),
+            new SafeOptimizationFixExecutor(options),
+            new VssSnapshotOrchestrator(),
+            new NoOpOptimizationRepository());
 
         _profile = new PolicyProfile
         {
@@ -794,4 +797,52 @@ internal sealed class TrustedInventoryStub : IInventoryRepository
 
     public Task<IReadOnlyList<FileInventoryItem>> GetFilesForPathsAsync(string sessionId, IEnumerable<string> paths, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<FileInventoryItem>>([]);
+}
+
+/// <summary>
+/// No-op optimization repository stub for tests that do not exercise optimization history.
+/// </summary>
+internal sealed class NoOpOptimizationRepository : IOptimizationRepository
+{
+    public Task<string> SaveFindingAsync(OptimizationFinding finding, CancellationToken ct = default) =>
+        Task.FromResult(finding.FindingId ?? Guid.NewGuid().ToString("N"));
+
+    public Task<OptimizationFinding?> GetFindingAsync(string findingId, CancellationToken ct = default) =>
+        Task.FromResult<OptimizationFinding?>(null);
+
+    public Task<IReadOnlyList<OptimizationFindingSummary>> ListFindingsAsync(int limit = 50, int offset = 0, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationFindingSummary>>([]);
+
+    public Task<IReadOnlyList<OptimizationFinding>> GetFindingsByKindAsync(OptimizationKind kind, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationFinding>>([]);
+
+    public Task<IReadOnlyList<OptimizationFinding>> GetAutoFixableFindingsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationFinding>>([]);
+
+    public Task<IReadOnlyList<OptimizationFinding>> GetFindingsByTargetAsync(string target, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationFinding>>([]);
+
+    public Task<bool> DeleteFindingAsync(string findingId, CancellationToken ct = default) =>
+        Task.FromResult(false);
+
+    public Task<int> DeleteFindingsByKindAsync(OptimizationKind kind, CancellationToken ct = default) =>
+        Task.FromResult(0);
+
+    public Task<string> SaveExecutionRecordAsync(OptimizationExecutionRecord record, CancellationToken ct = default) =>
+        Task.FromResult(record.RecordId ?? Guid.NewGuid().ToString("N"));
+
+    public Task<IReadOnlyList<OptimizationExecutionRecord>> GetExecutionHistoryAsync(string? planId = null, int limit = 50, int offset = 0, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationExecutionRecord>>([]);
+
+    public Task<IReadOnlyList<OptimizationExecutionRecord>> GetExecutionHistoryForTargetAsync(string target, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationExecutionRecord>>([]);
+
+    public Task<IReadOnlyList<OptimizationExecutionRollup>> GetExecutionRollupsAsync(int limit = 20, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationExecutionRollup>>([]);
+
+    public Task<IReadOnlyList<OptimizationExecutionSummary>> GetRecentExecutionSummariesAsync(int limit = 50, int offset = 0, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OptimizationExecutionSummary>>([]);
+
+    public Task<OptimizationExecutionRecord?> GetExecutionRecordAsync(string recordId, CancellationToken ct = default) =>
+        Task.FromResult<OptimizationExecutionRecord?>(null);
 }

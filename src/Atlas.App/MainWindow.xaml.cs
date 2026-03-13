@@ -84,6 +84,7 @@ public sealed partial class MainWindow : Window
         ShellView.SelectedItem = DashboardItem;
         NavigateTo("dashboard");
         RefreshSessionStatus();
+        SyncVoiceState("Voice commands stay confirmation-first and use the same risk gates as typed input.");
     }
 
     private void OnRootGridLoaded(object sender, RoutedEventArgs e)
@@ -190,15 +191,15 @@ public sealed partial class MainWindow : Window
         if (!listening)
         {
             session.UpdateCommandDraftPreview(CommandInputBox.Text, currentSectionTag);
-            VoiceStateText.Text = "Voice commands stay confirmation-first and use the same risk gates as typed input.";
+            SyncVoiceState("Voice commands stay confirmation-first and use the same risk gates as typed input.");
             return;
         }
 
         var preview = await session.PreviewVoiceIntentAsync(CommandInputBox.Text);
         session.UpdateCommandDraftPreview(preview.ParsedIntent, currentSectionTag, "Voice preview", preview.NeedsConfirmation);
-        VoiceStateText.Text = preview.NeedsConfirmation
+        SyncVoiceState(preview.NeedsConfirmation
             ? $"Voice intent preview: {preview.ParsedIntent}. Destructive, bulk, or protected-target phrasing stays confirmation-first."
-            : $"Voice intent preview: {preview.ParsedIntent}. Atlas will still route it through the same plan and policy gates as typed input.";
+            : $"Voice intent preview: {preview.ParsedIntent}. Atlas will still route it through the same plan and policy gates as typed input.");
     }
 
     private async Task DraftPlanFromInputAsync()
@@ -276,11 +277,16 @@ public sealed partial class MainWindow : Window
         var offsetX = ((point.X / width) - 0.5d) * 18d;
         var offsetY = ((point.Y / height) - 0.5d) * 14d;
 
-        HeroSurface.Translation = new Vector3((float)(offsetX * 0.18d), (float)(offsetY * 0.14d), 10f);
-        CommandSurface.Translation = new Vector3((float)(offsetX * 0.28d), (float)(offsetY * 0.2d), 18f);
-        HeroOrbHost.Translation = new Vector3((float)(offsetX * -0.55d), (float)(offsetY * -0.45d), 18f);
+        HeroSurface.Translation = new Vector3((float)(offsetX * 0.14d), (float)(offsetY * 0.12d), 10f);
+        CommandSurface.Translation = new Vector3((float)(offsetX * 0.22d), (float)(offsetY * 0.16d), 18f);
+        HeroOrbHost.Translation = new Vector3((float)(offsetX * -0.42d), (float)(offsetY * -0.34d), 18f);
+        CommandInsightWide.Translation = new Vector3((float)(offsetX * 0.12d), (float)(offsetY * 0.1d), 12f);
         TopGlowEllipse.Translation = new Vector3((float)(offsetX * -0.9d), (float)(offsetY * -0.7d), 0f);
         BottomGlowEllipse.Translation = new Vector3((float)(offsetX * 0.75d), (float)(offsetY * 0.65d), 0f);
+        ApplyProjectionTilt(HeroSurface, offsetY * -0.16d, offsetX * 0.18d, 24d);
+        ApplyProjectionTilt(CommandSurface, offsetY * -0.22d, offsetX * 0.24d, 36d);
+        ApplyProjectionTilt(HeroOrbHost, offsetY * 0.28d, offsetX * -0.34d, 46d);
+        ApplyProjectionTilt(CommandInsightWide, offsetY * -0.14d, offsetX * 0.16d, 18d);
     }
 
     private void OnRootGridPointerExited(object sender, PointerRoutedEventArgs e) =>
@@ -323,9 +329,9 @@ public sealed partial class MainWindow : Window
             var workArea = displayArea.WorkArea;
 
             var maxWidth = Math.Max(1100, workArea.Width - 48);
-            var maxHeight = Math.Max(720, workArea.Height - 48);
+            var maxHeight = Math.Max(760, workArea.Height - 28);
             var targetWidth = Math.Min(maxWidth, Math.Max(1320, (int)(workArea.Width * 0.9d)));
-            var targetHeight = Math.Min(maxHeight, Math.Max(820, (int)(workArea.Height * 0.9d)));
+            var targetHeight = Math.Min(maxHeight, Math.Max(860, (int)(workArea.Height * 0.93d)));
             var left = workArea.X + Math.Max(0, (workArea.Width - targetWidth) / 2);
             var top = workArea.Y + Math.Max(0, (workArea.Height - targetHeight) / 2);
 
@@ -342,8 +348,13 @@ public sealed partial class MainWindow : Window
         HeroSurface.Translation = new Vector3(0f, 0f, 10f);
         CommandSurface.Translation = new Vector3(0f, 0f, 18f);
         HeroOrbHost.Translation = new Vector3(0f, 0f, 18f);
+        CommandInsightWide.Translation = new Vector3(0f, 0f, 12f);
         TopGlowEllipse.Translation = Vector3.Zero;
         BottomGlowEllipse.Translation = Vector3.Zero;
+        ApplyProjectionTilt(HeroSurface, 0d, 0d, 18d);
+        ApplyProjectionTilt(CommandSurface, 0d, 0d, 28d);
+        ApplyProjectionTilt(HeroOrbHost, 0d, 0d, 36d);
+        ApplyProjectionTilt(CommandInsightWide, 0d, 0d, 12d);
     }
 
     private void StartAmbientMotion()
@@ -353,6 +364,17 @@ public sealed partial class MainWindow : Window
         StartVerticalLoop(OrbRing, -5f, 5200d);
         StartOpacityLoop(OrbHalo, 0.42f, 0.74f, 4300d);
         StartRotationLoop(OrbRing, 26000d);
+        StartVerticalLoop(HeroSurface, -3f, 6200d);
+        StartVerticalLoop(CommandSurface, 2f, 7000d);
+        StartVerticalLoop(CommandInsightWide, -2f, 7600d);
+        StartScaleLoop(TopGlowEllipse, 1f, 1.05f, 7600d);
+        StartScaleLoop(BottomGlowEllipse, 1f, 1.04f, 8400d);
+        StartOpacityLoop(TopGlowEllipse, 0.3f, 0.62f, 5600d);
+        StartOpacityLoop(BottomGlowEllipse, 0.24f, 0.54f, 6400d);
+        StartAxisScaleLoop(SignalBarOne, 1f, 1.14f, 2400d);
+        StartAxisScaleLoop(SignalBarTwo, 1f, 0.88f, 2100d);
+        StartAxisScaleLoop(SignalBarThree, 1f, 1.22f, 2600d);
+        StartAxisScaleLoop(SignalBarFour, 1f, 0.94f, 2300d);
     }
 
     private static bool AreAnimationsEnabled()
@@ -377,6 +399,21 @@ public sealed partial class MainWindow : Window
         animation.InsertKeyFrame(0f, new Vector3(minScale, minScale, 1f));
         animation.InsertKeyFrame(0.5f, new Vector3(maxScale, maxScale, 1f));
         animation.InsertKeyFrame(1f, new Vector3(minScale, minScale, 1f));
+        animation.Duration = TimeSpan.FromMilliseconds(durationMs);
+        animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+        visual.StartAnimation(nameof(visual.Scale), animation);
+    }
+
+    private static void StartAxisScaleLoop(UIElement element, float minYScale, float maxYScale, double durationMs)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var size = element.RenderSize;
+        visual.CenterPoint = new Vector3((float)size.Width / 2f, (float)size.Height, 0f);
+
+        var animation = visual.Compositor.CreateVector3KeyFrameAnimation();
+        animation.InsertKeyFrame(0f, new Vector3(1f, minYScale, 1f));
+        animation.InsertKeyFrame(0.5f, new Vector3(1f, maxYScale, 1f));
+        animation.InsertKeyFrame(1f, new Vector3(1f, minYScale, 1f));
         animation.Duration = TimeSpan.FromMilliseconds(durationMs);
         animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
         visual.StartAnimation(nameof(visual.Scale), animation);
@@ -418,6 +455,24 @@ public sealed partial class MainWindow : Window
         animation.Duration = TimeSpan.FromMilliseconds(durationMs);
         animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
         visual.StartAnimation(nameof(visual.RotationAngleInDegrees), animation);
+    }
+
+    private void SyncVoiceState(string text)
+    {
+        VoiceStateText.Text = text;
+        VoiceStateTextWide.Text = text;
+    }
+
+    private static void ApplyProjectionTilt(UIElement element, double rotationX, double rotationY, double depth)
+    {
+        if (element.Projection is not PlaneProjection projection)
+        {
+            return;
+        }
+
+        projection.RotationX = rotationX;
+        projection.RotationY = rotationY;
+        projection.GlobalOffsetZ = depth;
     }
 
     private sealed record ShellSection(

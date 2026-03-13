@@ -28,14 +28,16 @@ public sealed class PlanRepository(SqliteConnectionFactory connectionFactory) : 
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO plans (plan_id, scope, summary, payload, created_utc)
-            VALUES (@plan_id, @scope, @summary, @payload, @created_utc)
+            INSERT INTO plans (plan_id, scope, summary, payload, created_utc, source, source_session_id)
+            VALUES (@plan_id, @scope, @summary, @payload, @created_utc, @source, @source_session_id)
             """;
         command.Parameters.AddWithValue("@plan_id", plan.PlanId);
         command.Parameters.AddWithValue("@scope", plan.Scope);
         command.Parameters.AddWithValue("@summary", plan.Rationale);
         command.Parameters.AddWithValue("@payload", payload);
         command.Parameters.AddWithValue("@created_utc", createdUtc);
+        command.Parameters.AddWithValue("@source", plan.Source ?? "");
+        command.Parameters.AddWithValue("@source_session_id", plan.SourceSessionId ?? "");
 
         await command.ExecuteNonQueryAsync(ct);
         return plan.PlanId;
@@ -63,18 +65,38 @@ public sealed class PlanRepository(SqliteConnectionFactory connectionFactory) : 
 
     public async Task<IReadOnlyList<PlanSummary>> ListPlansAsync(int limit = 50, int offset = 0, CancellationToken ct = default)
     {
+        return await ListPlansAsync(limit, offset, sourceFilter: null, ct);
+    }
+
+    public async Task<IReadOnlyList<PlanSummary>> ListPlansAsync(int limit, int offset, string? sourceFilter, CancellationToken ct = default)
+    {
         await using var connection = connectionFactory.CreateConnection();
         await connection.OpenAsync(ct);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT plan_id, scope, summary, created_utc
-            FROM plans
-            ORDER BY created_utc DESC
-            LIMIT @limit OFFSET @offset
-            """;
+
+        var hasFilter = !string.IsNullOrEmpty(sourceFilter);
+        command.CommandText = hasFilter
+            ? """
+              SELECT plan_id, scope, summary, created_utc, source, source_session_id
+              FROM plans
+              WHERE source = @source
+              ORDER BY created_utc DESC
+              LIMIT @limit OFFSET @offset
+              """
+            : """
+              SELECT plan_id, scope, summary, created_utc, source, source_session_id
+              FROM plans
+              ORDER BY created_utc DESC
+              LIMIT @limit OFFSET @offset
+              """;
+
         command.Parameters.AddWithValue("@limit", limit);
         command.Parameters.AddWithValue("@offset", offset);
+        if (hasFilter)
+        {
+            command.Parameters.AddWithValue("@source", sourceFilter!);
+        }
 
         var results = new List<PlanSummary>();
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -84,7 +106,9 @@ public sealed class PlanRepository(SqliteConnectionFactory connectionFactory) : 
                 PlanId: reader.GetString(0),
                 Scope: reader.GetString(1),
                 Summary: reader.GetString(2),
-                CreatedUtc: DateTime.Parse(reader.GetString(3), null, DateTimeStyles.RoundtripKind)
+                CreatedUtc: DateTime.Parse(reader.GetString(3), null, DateTimeStyles.RoundtripKind),
+                Source: reader.GetString(4),
+                SourceSessionId: reader.GetString(5)
             ));
         }
 

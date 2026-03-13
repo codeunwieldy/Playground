@@ -13,65 +13,67 @@
                 <VisualState x:Name="CompactShellState" />
                 <VisualState x:Name="RoomyShellState">
                     <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="1480" MinWindowHeight="860" />
+                        <AdaptiveTrigger MinWindowWidth="1500" MinWindowHeight="820" />
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
-                        <Setter Target="ShellView.Margin" Value="14" />
-                        <Setter Target="ShellView.OpenPaneLength" Value="276" />
-                        <Setter Target="HeroSurface.Padding" Value="24" />
-                        <Setter Target="ShellTitleText.FontSize" Value="36" />
-                        <Setter Target="ShellSubtitleText.MaxWidth" Value="760" />
-                        <Setter Target="ShellSubtitleText.MaxLines" Value="3" />
+                        <Setter Target="ShellView.Margin" Value="8" />
+                        <Setter Target="ShellView.OpenPaneLength" Value="220" />
+                        <Setter Target="HeroSurface.Padding" Value="10" />
+                        <Setter Target="ShellTitleText.FontSize" Value="28" />
+                        <Setter Target="TopDeckTelemetryColumn.Width" Value="212" />
+                        <Setter Target="TopDeckIntelColumn.Width" Value="224" />
+                        <Setter Target="HeroOrbHost.Width" Value="96" />
+                        <Setter Target="HeroOrbHost.Height" Value="96" />
                         <Setter Target="HeroBadgeStrip.Visibility" Value="Visible" />
                         <Setter Target="HeroBadgeSummary.Visibility" Value="Collapsed" />
-                        <Setter Target="HeroOrbColumn.Width" Value="320" />
-                        <Setter Target="HeroOrbHost.Visibility" Value="Visible" />
-                        <Setter Target="CommandSurface.Padding" Value="20" />
-                        <Setter Target="CommandInsightWideColumn.Width" Value="344" />
+                        <Setter Target="CommandDeckActionPanel.Orientation" Value="Horizontal" />
+                        <Setter Target="CommandDeckActionPanel.Spacing" Value="10" />
                         <Setter Target="CommandInsightWide.Visibility" Value="Visible" />
                         <Setter Target="CommandInsightCompact.Visibility" Value="Collapsed" />
                     </VisualState.Setters>
                 </VisualState>
                 <VisualState x:Name="ExpandedShellState">
                     <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="1740" MinWindowHeight="960" />
+                        <AdaptiveTrigger MinWindowWidth="1800" MinWindowHeight="940" />
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
-                        <Setter Target="ShellView.Margin" Value="16" />
-                        <Setter Target="HeroSurface.Padding" Value="28" />
-                        <Setter Target="ShellTitleText.FontSize" Value="40" />
-                        <Setter Target="ShellSubtitleText.MaxWidth" Value="840" />
-                        <Setter Target="HeroOrbColumn.Width" Value="356" />
-                        <Setter Target="HeroOrbHost.Width" Value="336" />
-                        <Setter Target="CommandInsightWideColumn.Width" Value="360" />
+                        <Setter Target="ShellView.Margin" Value="10" />
+                        <Setter Target="ShellView.OpenPaneLength" Value="236" />
+                        <Setter Target="ShellTitleText.FontSize" Value="31" />
+                        <Setter Target="TopDeckTelemetryColumn.Width" Value="228" />
+                        <Setter Target="TopDeckIntelColumn.Width" Value="248" />
+                        <Setter Target="HeroOrbHost.Width" Value="108" />
+                        <Setter Target="HeroOrbHost.Height" Value="108" />
                     </VisualState.Setters>
                 </VisualState>
             </VisualStateGroup>
         </VisualStateManager.VisualStateGroups>
 
         <Ellipse x:Name="TopGlowEllipse"
-                 Width="520"
-                 Height="520"
-                 Margin="-190,-160,0,0"
+                 Width="620"
+                 Height="620"
+                 Margin="-220,-190,0,0"
                  HorizontalAlignment="Left"
                  VerticalAlignment="Top"
                  Fill="{StaticResource AtlasGlowBrush}"
-                 IsHitTestVisible="False" />
+                 IsHitTestVisible="False"
+                 Opacity="0.6" />
         <Ellipse x:Name="BottomGlowEllipse"
-                 Width="460"
-                 Height="460"
-                 Margin="0,0,-180,-170"
+                 Width="520"
+                 Height="520"
+                 Margin="0,0,-180,-180"
                  HorizontalAlignment="Right"
                  VerticalAlignment="Bottom"
                  Fill="{StaticResource AtlasCopperGlowBrush}"
-                 IsHitTestVisible="False" />
+                 IsHitTestVisible="False"
+                 Opacity="0.58" />
 
         <NavigationView x:Name="ShellView"
-                        Margin="10"
+                        Margin="4"
                         CompactPaneLength="52"
                         IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False"
-                        OpenPaneLength="248"
+                        OpenPaneLength="204"
                         PaneDisplayMode="Auto"
                         PaneTitle="Atlas"
                         SelectionChanged="OnSelectionChanged">
@@ -109,320 +111,424 @@
             </NavigationView.MenuItems>
 
             <NavigationView.PaneFooter>
-                <Border Margin="12,8,12,18"
+                <Border Margin="12,10,12,18"
                         Padding="14"
                         Style="{StaticResource AtlasInsetPanelStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="GUARDRAILS" />
-                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Protected mode stays on" />
-                        <TextBlock MaxLines="3"
+                    <StackPanel Spacing="6">
+                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="SAFE CORE" />
+                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Preview-first. Quarantine-first." />
+                        <TextBlock MaxLines="4"
                                    Style="{StaticResource AtlasBodyTextStyle}"
-                                   Text="System paths stay blocked, sync roots stay excluded, and every delete still routes through quarantine before anything irreversible happens."
+                                   Text="Atlas still refuses system paths, keeps sync roots excluded by default, and routes destructive cleanup through reversible quarantine."
                                    TextTrimming="WordEllipsis" />
                     </StackPanel>
                 </Border>
             </NavigationView.PaneFooter>
 
-            <Grid RowSpacing="14">
+            <Grid RowSpacing="12">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <Border x:Name="HeroSurface"
-                        Margin="18,18,18,0"
-                        Padding="18"
-                        Style="{StaticResource AtlasElevatedPanelStyle}">
-                    <Grid ColumnSpacing="20">
+                        Margin="10,8,10,0"
+                        Padding="8"
+                        Style="{StaticResource AtlasMissionDeckStyle}">
+                    <Border.Projection>
+                        <PlaneProjection CenterOfRotationX="0.5" CenterOfRotationY="0.5" />
+                    </Border.Projection>
+                    <Grid ColumnSpacing="10">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="TopDeckTelemetryColumn" Width="188" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition x:Name="HeroOrbColumn" Width="0" />
+                            <ColumnDefinition x:Name="TopDeckIntelColumn" Width="0" />
                         </Grid.ColumnDefinitions>
 
-                        <StackPanel Spacing="14">
-                            <TextBlock x:Name="ShellEyebrowText"
-                                       Style="{StaticResource AtlasEyebrowStyle}"
-                                       Text="ATLAS COMMAND DECK" />
-                            <TextBlock x:Name="ShellTitleText"
-                                       FontSize="30"
-                                       MaxLines="2"
-                                       MaxWidth="760"
-                                       Style="{StaticResource AtlasHeroTextStyle}"
-                                       Text="Shape the machine without surrendering the safety rails."
-                                       TextTrimming="WordEllipsis" />
-                            <TextBlock x:Name="ShellSubtitleText"
-                                       MaxLines="2"
-                                       MaxWidth="620"
-                                       Style="{StaticResource AtlasBodyTextStyle}"
-                                       Text="Ask Atlas to draft a plan, review duplicates, or inspect optimization pressure. Every destructive step is previewed first and paired with rollback metadata."
-                                       TextTrimming="WordEllipsis" />
+                        <Border Padding="10"
+                                Style="{StaticResource AtlasTelemetryPanelStyle}">
+                            <Grid RowSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                            <Grid ColumnSpacing="14">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
 
-                                <Border Padding="16"
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="ATLAS CORE" />
+                                        <TextBlock x:Name="StatusEyebrowText"
+                                                   Style="{StaticResource AtlasEyebrowStyle}"
+                                                   Text="SYSTEM POSTURE" />
+                                        <TextBlock x:Name="StatusBadgeText"
+                                                   MaxLines="2"
+                                                   Style="{StaticResource AtlasSectionHeadingStyle}"
+                                                   Text="Planner locked to DSL"
+                                                   TextTrimming="WordEllipsis"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="StatusDetailText"
+                                                   MaxLines="2"
+                                                   Style="{StaticResource AtlasBodyTextStyle}"
+                                                   Text="The service remains the only process allowed to mutate files, create undo checkpoints, or apply optimization changes."
+                                                   TextTrimming="WordEllipsis"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <Border x:Name="HeroOrbHost"
+                                            Grid.Column="1"
+                                            Width="88"
+                                            Height="88"
+                                            HorizontalAlignment="Right"
+                                            Style="{StaticResource AtlasOrbSurfaceStyle}"
+                                            Translation="0,0,18">
+                                        <Border.Projection>
+                                            <PlaneProjection CenterOfRotationX="0.5" CenterOfRotationY="0.5" />
+                                        </Border.Projection>
+                                        <Grid>
+                                            <Ellipse x:Name="OrbHalo"
+                                                     Width="106"
+                                                     Height="106"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center"
+                                                     Fill="{StaticResource AtlasOrbHaloBrush}"
+                                                     Opacity="0.72" />
+                                            <Ellipse x:Name="OrbRing"
+                                                     Width="78"
+                                                     Height="78"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center"
+                                                     Stroke="{StaticResource AtlasOrbRingBrush}"
+                                                     StrokeThickness="1.5" />
+                                            <Ellipse x:Name="OrbPulse"
+                                                     Width="62"
+                                                     Height="62"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center"
+                                                     Fill="{StaticResource AtlasGlowBrush}"
+                                                     Opacity="0.72" />
+                                            <Border x:Name="OrbCore"
+                                                    Width="50"
+                                                    Height="50"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    Background="{StaticResource AtlasOrbCoreBrush}"
+                                                    CornerRadius="25">
+                                                <Border.Shadow>
+                                                    <ThemeShadow />
+                                                </Border.Shadow>
+                                                <StackPanel HorizontalAlignment="Center"
+                                                            VerticalAlignment="Center"
+                                                            Spacing="1">
+                                                    <TextBlock HorizontalAlignment="Center"
+                                                               Style="{StaticResource AtlasEyebrowStyle}"
+                                                               Text="MODE" />
+                                                    <TextBlock HorizontalAlignment="Center"
+                                                               MaxWidth="46"
+                                                               Style="{StaticResource AtlasBodyTextStyle}"
+                                                               Text="{Binding ConnectionModeLabel}"
+                                                               TextAlignment="Center"
+                                                               TextWrapping="WrapWholeWords" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </Grid>
+
+                                <Border Grid.Row="1"
+                                        Padding="8"
                                         Style="{StaticResource AtlasInsetPanelStyle}">
-                                    <Grid ColumnSpacing="12">
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="OPERATING POSTURE" />
+                                        <StackPanel x:Name="HeroBadgeStrip"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    Visibility="Collapsed">
+                                            <Border Style="{StaticResource AtlasBadgeStyle}">
+                                                <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="Service-gated" />
+                                            </Border>
+                                            <Border Style="{StaticResource AtlasBadgeStyle}">
+                                                <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="Undo-armed" />
+                                            </Border>
+                                            <Border Style="{StaticResource AtlasBadgeStyle}">
+                                                <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="Trust-aware" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock x:Name="HeroBadgeSummary"
+                                                   MaxLines="1"
+                                                   Style="{StaticResource AtlasBodyTextStyle}"
+                                                   Text="Service-gated. Undo-armed."
+                                                   TextTrimming="WordEllipsis" />
+                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}"
+                                                   MaxLines="1"
+                                                   Text="{Binding ConnectionModeDetail}"
+                                                   TextTrimming="WordEllipsis" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Row="2"
+                                        Padding="8"
+                                        Style="{StaticResource AtlasInsetPanelStyle}">
+                                    <Grid ColumnSpacing="6" VerticalAlignment="Bottom">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="6">
-                                            <TextBlock x:Name="StatusEyebrowText"
-                                                       Style="{StaticResource AtlasEyebrowStyle}"
-                                                       Text="SYSTEM POSTURE" />
-                                            <TextBlock x:Name="StatusBadgeText"
-                                                       MaxLines="2"
-                                                       Style="{StaticResource AtlasSectionHeadingStyle}"
-                                                       Text="Planner locked to DSL"
-                                                       TextTrimming="WordEllipsis" />
-                                            <TextBlock x:Name="StatusDetailText"
-                                                       MaxLines="2"
-                                                       Style="{StaticResource AtlasBodyTextStyle}"
-                                                       Text="The service remains the only component allowed to mutate files, create undo checkpoints, or apply optimization changes."
-                                                       TextTrimming="WordEllipsis" />
-                                        </StackPanel>
-
-                                        <CommandBar Grid.Column="1"
-                                                    DefaultLabelPosition="Right"
-                                                    IsDynamicOverflowEnabled="False"
-                                                    OverflowButtonVisibility="Collapsed">
-                                            <AppBarButton Click="OnQuickNavigateClick" Tag="dashboard" Label="Scan">
-                                                <AppBarButton.Icon>
-                                                    <SymbolIcon Symbol="Refresh" />
-                                                </AppBarButton.Icon>
-                                            </AppBarButton>
-                                            <AppBarButton Click="OnQuickNavigateClick" Tag="plans" Label="Plans">
-                                                <AppBarButton.Icon>
-                                                    <SymbolIcon Symbol="Preview" />
-                                                </AppBarButton.Icon>
-                                            </AppBarButton>
-                                            <AppBarButton Click="OnQuickNavigateClick" Tag="undo" Label="Undo">
-                                                <AppBarButton.Icon>
-                                                    <SymbolIcon Symbol="Undo" />
-                                                </AppBarButton.Icon>
-                                            </AppBarButton>
-                                            <AppBarButton Click="OnQuickNavigateClick" Tag="history" Label="Memory">
-                                                <AppBarButton.Icon>
-                                                    <SymbolIcon Symbol="Library" />
-                                                </AppBarButton.Icon>
-                                            </AppBarButton>
-                                        </CommandBar>
+                                        <Border x:Name="SignalBarOne"
+                                                Height="16"
+                                                VerticalAlignment="Bottom"
+                                                Background="{StaticResource AtlasAccentGradientBrush}"
+                                                CornerRadius="999" />
+                                        <Border x:Name="SignalBarTwo"
+                                                Grid.Column="1"
+                                                Height="22"
+                                                VerticalAlignment="Bottom"
+                                                Background="{StaticResource AtlasAccentGradientBrush}"
+                                                CornerRadius="999"
+                                                Opacity="0.92" />
+                                        <Border x:Name="SignalBarThree"
+                                                Grid.Column="2"
+                                                Height="12"
+                                                VerticalAlignment="Bottom"
+                                                Background="{StaticResource AtlasAccentGradientBrush}"
+                                                CornerRadius="999"
+                                                Opacity="0.8" />
+                                        <Border x:Name="SignalBarFour"
+                                                Grid.Column="3"
+                                                Height="26"
+                                                VerticalAlignment="Bottom"
+                                                Background="{StaticResource AtlasAccentGradientBrush}"
+                                                CornerRadius="999"
+                                                Opacity="0.96" />
                                     </Grid>
                                 </Border>
-
-                                <StackPanel Grid.Column="1"
-                                            HorizontalAlignment="Right"
-                                            Spacing="8">
-                                    <StackPanel x:Name="HeroBadgeStrip"
-                                                Orientation="Horizontal"
-                                                Spacing="8"
-                                                Visibility="Collapsed">
-                                        <Border Style="{StaticResource AtlasBadgeStyle}">
-                                            <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="Preview before execute" />
-                                        </Border>
-                                        <Border Style="{StaticResource AtlasBadgeStyle}">
-                                            <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="Quarantine-first deletion" />
-                                        </Border>
-                                        <Border Style="{StaticResource AtlasBadgeStyle}">
-                                            <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="Undo journal armed" />
-                                        </Border>
-                                    </StackPanel>
-                                    <TextBlock x:Name="HeroBadgeSummary"
-                                               HorizontalAlignment="Right"
-                                               MaxWidth="280"
-                                               Style="{StaticResource AtlasBodyTextStyle}"
-                                               Text="Preview-first. Quarantine-first. Undo-armed."
-                                               TextAlignment="Right"
-                                               TextTrimming="WordEllipsis" />
-                                    <TextBlock HorizontalAlignment="Right"
-                                               MaxWidth="280"
-                                               Style="{StaticResource AtlasBodyTextStyle}"
-                                               Text="Atlas behaves like a disciplined operator: intelligent, reversible, and service-gated."
-                                               TextAlignment="Right"
-                                               TextTrimming="WordEllipsis" />
-                                </StackPanel>
-                            </Grid>
-                        </StackPanel>
-
-                        <Border x:Name="HeroOrbHost"
-                                Grid.Column="1"
-                                Width="300"
-                                Height="226"
-                                Padding="18"
-                                Style="{StaticResource AtlasOrbSurfaceStyle}"
-                                Translation="0,0,18"
-                                Visibility="Collapsed">
-                            <Grid>
-                                <Ellipse x:Name="OrbHalo"
-                                         Width="230"
-                                         Height="230"
-                                         HorizontalAlignment="Center"
-                                         VerticalAlignment="Center"
-                                         Fill="{StaticResource AtlasOrbHaloBrush}" />
-                                <Ellipse x:Name="OrbRing"
-                                         Width="186"
-                                         Height="186"
-                                         HorizontalAlignment="Center"
-                                         VerticalAlignment="Center"
-                                         Stroke="{StaticResource AtlasOrbRingBrush}"
-                                         StrokeThickness="1.5" />
-                                <Ellipse x:Name="OrbPulse"
-                                         Width="156"
-                                         Height="156"
-                                         HorizontalAlignment="Center"
-                                         VerticalAlignment="Center"
-                                         Fill="{StaticResource AtlasGlowBrush}"
-                                         Opacity="0.72" />
-                                <Border x:Name="OrbCore"
-                                        Width="128"
-                                        Height="128"
-                                        HorizontalAlignment="Center"
-                                        VerticalAlignment="Center"
-                                        Background="{StaticResource AtlasOrbCoreBrush}"
-                                        CornerRadius="64">
-                                    <Border.Shadow>
-                                        <ThemeShadow />
-                                    </Border.Shadow>
-                                    <StackPanel HorizontalAlignment="Center"
-                                                VerticalAlignment="Center"
-                                                Spacing="4">
-                                        <TextBlock HorizontalAlignment="Center"
-                                                   Style="{StaticResource AtlasEyebrowStyle}"
-                                                   Text="AI CORE" />
-                                        <TextBlock HorizontalAlignment="Center"
-                                                   Style="{StaticResource AtlasSectionHeadingStyle}"
-                                                   Text="{Binding ConnectionModeLabel}"
-                                                   TextAlignment="Center"
-                                                   TextWrapping="Wrap" />
-                                        <TextBlock HorizontalAlignment="Center"
-                                                   MaxWidth="108"
-                                                   Style="{StaticResource AtlasBodyTextStyle}"
-                                                   Text="{Binding BusyStateLabel}"
-                                                   TextAlignment="Center"
-                                                   TextWrapping="WrapWholeWords" />
-                                    </StackPanel>
-                                </Border>
-
-                                <StackPanel Margin="0,0,0,2"
-                                            VerticalAlignment="Bottom"
-                                            Spacing="4">
-                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="INTELLIGENT POSTURE" />
-                                    <TextBlock MaxLines="2"
-                                               Style="{StaticResource AtlasBodyTextStyle}"
-                                               Text="{Binding ConnectionModeDetail}"
-                                               TextTrimming="WordEllipsis" />
-                                </StackPanel>
                             </Grid>
                         </Border>
-                    </Grid>
-                </Border>
 
-                <Border x:Name="CommandSurface"
-                        Grid.Row="1"
-                        Margin="18,0,18,0"
-                        Padding="18"
-                        Style="{StaticResource AtlasElevatedPanelStyle}">
-                    <Grid RowSpacing="14" ColumnSpacing="14">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition x:Name="CommandInsightWideColumn" Width="0" />
-                        </Grid.ColumnDefinitions>
+                        <Border x:Name="CommandSurface"
+                                Grid.Column="1"
+                                Padding="14"
+                                Style="{StaticResource AtlasStagePanelStyle}">
+                            <Border.Projection>
+                                <PlaneProjection CenterOfRotationX="0.5" CenterOfRotationY="0.5" />
+                            </Border.Projection>
+                            <Grid RowSpacing="10">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                        <StackPanel Spacing="12">
-                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="COMMAND CONSOLE" />
-                            <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
 
-                                <AutoSuggestBox x:Name="CommandInputBox"
-                                                PlaceholderText="Ask Atlas to organize Downloads, review duplicates, or prepare a safer cleanup plan"
-                                                QuerySubmitted="OnCommandSubmitted"
-                                                TextChanged="OnCommandTextChanged"
-                                                AutomationProperties.Name="Atlas command input" />
-
-                                <ToggleButton x:Name="VoiceToggleButton"
-                                              Grid.Column="1"
-                                              MinWidth="132"
-                                              Click="OnVoiceToggleClick"
-                                              Style="{StaticResource AtlasToggleButtonStyle}"
-                                              AutomationProperties.Name="Push to talk toggle"
-                                              Content="Push to talk" />
-
-                                <Button x:Name="PrimaryActionButton"
-                                        Grid.Column="2"
-                                        Click="OnPrimaryActionClick"
-                                        Style="{StaticResource AtlasPrimaryButtonStyle}"
-                                        AutomationProperties.Name="Primary action"
-                                        Content="Draft plan" />
-                            </Grid>
-
-                            <ScrollViewer HorizontalScrollMode="Enabled"
-                                          HorizontalScrollBarVisibility="Hidden"
-                                          VerticalScrollMode="Disabled"
-                                          VerticalScrollBarVisibility="Disabled">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Click="OnPromptRecipeClick"
-                                            Style="{StaticResource AtlasChipButtonStyle}"
-                                            Tag="Organize Downloads into calmer categories and route duplicate deletions through quarantine first."
-                                            Content="Organize Downloads" />
-                                    <Button Click="OnPromptRecipeClick"
-                                            Style="{StaticResource AtlasChipButtonStyle}"
-                                            Tag="Review screenshots, exports, and image clutter without touching sync-managed folders."
-                                            Content="Triage Screenshots" />
-                                    <Button Click="OnPromptRecipeClick"
-                                            Style="{StaticResource AtlasChipButtonStyle}"
-                                            Tag="Inspect temp buildup, startup clutter, and safe optimization opportunities."
-                                            Content="Inspect Optimization" />
-                                </StackPanel>
-                            </ScrollViewer>
-
-                            <Border Padding="16"
-                                    Style="{StaticResource AtlasInsetPanelStyle}">
-                                <StackPanel Spacing="10">
-                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="INTENT PREVIEW" />
-                                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
-                                               Text="{Binding CommandInterpretationText}"
-                                               TextWrapping="Wrap" />
-                                    <TextBlock MaxLines="3"
-                                               Style="{StaticResource AtlasBodyTextStyle}"
-                                               Text="{Binding CommandInterpretationDetailText}"
-                                               TextTrimming="WordEllipsis"
-                                               TextWrapping="Wrap" />
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Border Style="{StaticResource AtlasBadgeStyle}">
-                                            <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}"
-                                                       Text="{Binding CommandOriginLabel}" />
-                                        </Border>
-                                        <Border Style="{StaticResource AtlasBadgeStyle}">
-                                            <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}"
-                                                       Text="{Binding CommandWorkspaceLabel}" />
-                                        </Border>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="ShellEyebrowText"
+                                                   Style="{StaticResource AtlasEyebrowStyle}"
+                                                   Text="ATLAS COMMAND DECK" />
+                                        <TextBlock x:Name="ShellTitleText"
+                                                   FontSize="24"
+                                                   MaxLines="2"
+                                                   MaxWidth="700"
+                                                   Style="{StaticResource AtlasHeroTextStyle}"
+                                                   Text="Atlas behaves like a live operations deck instead of a long settings page."
+                                                   TextTrimming="WordEllipsis" />
+                                        <TextBlock x:Name="ShellSubtitleText"
+                                                   MaxLines="2"
+                                                   MaxWidth="720"
+                                                   Style="{StaticResource AtlasBodyTextStyle}"
+                                                   Text="The shell keeps AI intent, trust posture, and next-step guidance in one compact deck so the actual workspace is visible sooner on everyday monitors."
+                                                   TextTrimming="WordEllipsis" />
                                     </StackPanel>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
+
+                                    <Border Grid.Column="1"
+                                            MinWidth="180"
+                                            Padding="10"
+                                            Style="{StaticResource AtlasInsetPanelStyle}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="LIVE FEED" />
+                                            <TextBlock x:Name="ShellHintText"
+                                                       MaxLines="2"
+                                                       Style="{StaticResource AtlasBodyTextStyle}"
+                                                       Text="Draft a reviewed plan first. Atlas will route you into the correct workspace before any filesystem change is even eligible."
+                                                       TextTrimming="WordEllipsis" />
+                                            <TextBlock x:Name="SessionStatusText"
+                                                       MaxLines="1"
+                                                       Style="{StaticResource AtlasBodyTextStyle}"
+                                                       Text="Atlas is standing by."
+                                                       TextTrimming="WordEllipsis" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Grid.Row="1" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <AutoSuggestBox x:Name="CommandInputBox"
+                                                    Background="{StaticResource AtlasCardBrush}"
+                                                    BorderBrush="{StaticResource AtlasLineBrush}"
+                                                    BorderThickness="1"
+                                                    Foreground="{StaticResource AtlasTextBrush}"
+                                                    PlaceholderText="Ask Atlas to organize Downloads, review duplicates, or prepare a safer cleanup pass"
+                                                    QuerySubmitted="OnCommandSubmitted"
+                                                    TextChanged="OnCommandTextChanged"
+                                                    AutomationProperties.Name="Atlas command input" />
+
+                                    <ToggleButton x:Name="VoiceToggleButton"
+                                                  Grid.Column="1"
+                                                  MinWidth="132"
+                                                  Click="OnVoiceToggleClick"
+                                                  Style="{StaticResource AtlasToggleButtonStyle}"
+                                                  AutomationProperties.Name="Push to talk toggle"
+                                                  Content="Push to talk" />
+
+                                    <Button x:Name="PrimaryActionButton"
+                                            Grid.Column="2"
+                                            Click="OnPrimaryActionClick"
+                                            Style="{StaticResource AtlasPrimaryButtonStyle}"
+                                            AutomationProperties.Name="Primary action"
+                                            Content="Draft plan" />
+                                </Grid>
+
+                                <ScrollViewer Grid.Row="2"
+                                              HorizontalScrollMode="Enabled"
+                                              HorizontalScrollBarVisibility="Hidden"
+                                              VerticalScrollMode="Disabled"
+                                              VerticalScrollBarVisibility="Disabled">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Click="OnPromptRecipeClick"
+                                                Style="{StaticResource AtlasChipButtonStyle}"
+                                                Tag="Organize Downloads into calmer categories and route duplicate deletions through quarantine first."
+                                                Content="Organize Downloads" />
+                                        <Button Click="OnPromptRecipeClick"
+                                                Style="{StaticResource AtlasChipButtonStyle}"
+                                                Tag="Review screenshots, exports, and image clutter without touching sync-managed folders."
+                                                Content="Triage Screenshots" />
+                                        <Button Click="OnPromptRecipeClick"
+                                                Style="{StaticResource AtlasChipButtonStyle}"
+                                                Tag="Inspect temp buildup, startup clutter, and safe optimization opportunities."
+                                                Content="Inspect Optimization" />
+                                    </StackPanel>
+                                </ScrollViewer>
+
+                                <Grid Grid.Row="3" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.08*" />
+                                        <ColumnDefinition Width="1.32*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Padding="12"
+                                            Style="{StaticResource AtlasInsetPanelStyle}">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="INTENT PREVIEW" />
+                                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
+                                                       Text="{Binding CommandInterpretationText}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock MaxLines="2"
+                                                       Style="{StaticResource AtlasBodyTextStyle}"
+                                                       Text="{Binding CommandInterpretationDetailText}"
+                                                       TextTrimming="WordEllipsis" />
+                                            <StackPanel x:Name="CommandDeckActionPanel"
+                                                        Orientation="Vertical"
+                                                        Spacing="6">
+                                                <Border Style="{StaticResource AtlasBadgeStyle}">
+                                                    <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}"
+                                                               Text="{Binding CommandOriginLabel}" />
+                                                </Border>
+                                                <Border Style="{StaticResource AtlasBadgeStyle}">
+                                                    <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}"
+                                                               Text="{Binding CommandWorkspaceLabel}" />
+                                                </Border>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <ScrollViewer x:Name="CommandInsightCompact"
+                                                  Grid.Column="1"
+                                                  HorizontalScrollMode="Enabled"
+                                                  HorizontalScrollBarVisibility="Hidden"
+                                                  VerticalScrollMode="Disabled"
+                                                  VerticalScrollBarVisibility="Disabled">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="210" />
+                                                <ColumnDefinition Width="210" />
+                                                <ColumnDefinition Width="210" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Padding="12" Style="{StaticResource AtlasMicroPanelStyle}">
+                                                <StackPanel Spacing="5">
+                                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="REVIEW GATE" />
+                                                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
+                                                               Text="{Binding CommandReviewLabel}"
+                                                               TextWrapping="Wrap" />
+                                                    <TextBlock MaxLines="3"
+                                                               Style="{StaticResource AtlasBodyTextStyle}"
+                                                               Text="{Binding CommandReviewDetailText}"
+                                                               TextTrimming="WordEllipsis" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Grid.Column="1" Padding="12" Style="{StaticResource AtlasMicroPanelStyle}">
+                                                <StackPanel Spacing="5">
+                                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="NEXT STEP" />
+                                                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
+                                                               Text="{Binding CommandNextStepLabel}"
+                                                               TextWrapping="Wrap" />
+                                                    <TextBlock MaxLines="3"
+                                                               Style="{StaticResource AtlasBodyTextStyle}"
+                                                               Text="{Binding CommandNextStepDetailText}"
+                                                               TextTrimming="WordEllipsis" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Grid.Column="2" Padding="12" Style="{StaticResource AtlasMicroPanelStyle}">
+                                                <StackPanel Spacing="5">
+                                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="VOICE GATE" />
+                                                    <TextBlock x:Name="VoiceStateText"
+                                                               MaxLines="4"
+                                                               Style="{StaticResource AtlasBodyTextStyle}"
+                                                               Text="Voice commands stay confirmation-first and use the same risk gates as typed input."
+                                                               TextTrimming="WordEllipsis" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </ScrollViewer>
+                                </Grid>
+
+                                <ProgressBar x:Name="BusyProgressBar"
+                                             Grid.Row="4"
+                                             Height="4"
+                                             IsIndeterminate="False"
+                                             ShowError="False"
+                                             ShowPaused="False" />
+                            </Grid>
+                        </Border>
 
                         <StackPanel x:Name="CommandInsightWide"
-                                    Grid.Column="1"
-                                    Spacing="12"
+                                    Grid.Column="2"
+                                    Spacing="10"
                                     Visibility="Collapsed">
-                            <Border Padding="16"
-                                    Style="{StaticResource AtlasInsetPanelStyle}">
-                                <StackPanel Spacing="8">
+                            <StackPanel.Projection>
+                                <PlaneProjection CenterOfRotationX="0.5" CenterOfRotationY="0.5" />
+                            </StackPanel.Projection>
+                            <Border Padding="12" Style="{StaticResource AtlasInsetPanelStyle}">
+                                <StackPanel Spacing="6">
                                     <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="REVIEW GATE" />
                                     <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
                                                Text="{Binding CommandReviewLabel}"
@@ -430,14 +536,12 @@
                                     <TextBlock MaxLines="4"
                                                Style="{StaticResource AtlasBodyTextStyle}"
                                                Text="{Binding CommandReviewDetailText}"
-                                               TextTrimming="WordEllipsis"
-                                               TextWrapping="Wrap" />
+                                               TextTrimming="WordEllipsis" />
                                 </StackPanel>
                             </Border>
 
-                            <Border Padding="16"
-                                    Style="{StaticResource AtlasInsetPanelStyle}">
-                                <StackPanel Spacing="8">
+                            <Border Padding="12" Style="{StaticResource AtlasInsetPanelStyle}">
+                                <StackPanel Spacing="6">
                                     <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="NEXT STEP" />
                                     <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
                                                Text="{Binding CommandNextStepLabel}"
@@ -445,124 +549,27 @@
                                     <TextBlock MaxLines="4"
                                                Style="{StaticResource AtlasBodyTextStyle}"
                                                Text="{Binding CommandNextStepDetailText}"
-                                               TextTrimming="WordEllipsis"
-                                               TextWrapping="Wrap" />
+                                               TextTrimming="WordEllipsis" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Padding="12" Style="{StaticResource AtlasInsetPanelStyle}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="VOICE GATE" />
+                                    <TextBlock x:Name="VoiceStateTextWide"
+                                               MaxLines="4"
+                                               Style="{StaticResource AtlasBodyTextStyle}"
+                                               Text="Voice commands stay confirmation-first and use the same risk gates as typed input."
+                                               TextTrimming="WordEllipsis" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
-
-                        <ScrollViewer x:Name="CommandInsightCompact"
-                                      Grid.Row="1"
-                                      Grid.ColumnSpan="2"
-                                      HorizontalScrollMode="Enabled"
-                                      HorizontalScrollBarVisibility="Hidden"
-                                      VerticalScrollMode="Disabled"
-                                      VerticalScrollBarVisibility="Disabled">
-                            <Grid ColumnSpacing="14">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="320" />
-                                    <ColumnDefinition Width="320" />
-                                </Grid.ColumnDefinitions>
-
-                                <Border Padding="16"
-                                        Style="{StaticResource AtlasInsetPanelStyle}">
-                                    <StackPanel Spacing="8">
-                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="REVIEW GATE" />
-                                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
-                                                   Text="{Binding CommandReviewLabel}"
-                                                   TextWrapping="Wrap" />
-                                        <TextBlock MaxLines="4"
-                                                   Style="{StaticResource AtlasBodyTextStyle}"
-                                                   Text="{Binding CommandReviewDetailText}"
-                                                   TextTrimming="WordEllipsis"
-                                                   TextWrapping="Wrap" />
-                                    </StackPanel>
-                                </Border>
-
-                                <Border Grid.Column="1"
-                                        Padding="16"
-                                        Style="{StaticResource AtlasInsetPanelStyle}">
-                                    <StackPanel Spacing="8">
-                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="NEXT STEP" />
-                                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
-                                                   Text="{Binding CommandNextStepLabel}"
-                                                   TextWrapping="Wrap" />
-                                        <TextBlock MaxLines="4"
-                                                   Style="{StaticResource AtlasBodyTextStyle}"
-                                                   Text="{Binding CommandNextStepDetailText}"
-                                                   TextTrimming="WordEllipsis"
-                                                   TextWrapping="Wrap" />
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </ScrollViewer>
-
-                        <ScrollViewer Grid.Row="2"
-                                      Grid.ColumnSpan="2"
-                                      HorizontalScrollMode="Enabled"
-                                      HorizontalScrollBarVisibility="Hidden"
-                                      VerticalScrollMode="Disabled"
-                                      VerticalScrollBarVisibility="Disabled">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="320" />
-                                    <ColumnDefinition Width="320" />
-                                    <ColumnDefinition Width="320" />
-                                </Grid.ColumnDefinitions>
-
-                                <Border Padding="14"
-                                        Style="{StaticResource AtlasMicroPanelStyle}">
-                                    <StackPanel Spacing="6">
-                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="GUIDANCE" />
-                                        <TextBlock x:Name="ShellHintText"
-                                                   MaxLines="3"
-                                                   Style="{StaticResource AtlasBodyTextStyle}"
-                                                   Text="Draft a reviewed plan first. The shell will route you into the correct workspace before any filesystem change is even eligible."
-                                                   TextTrimming="WordEllipsis" />
-                                    </StackPanel>
-                                </Border>
-
-                                <Border Grid.Column="1"
-                                        Padding="14"
-                                        Style="{StaticResource AtlasMicroPanelStyle}">
-                                    <StackPanel Spacing="6">
-                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="VOICE" />
-                                        <TextBlock x:Name="VoiceStateText"
-                                                   MaxLines="3"
-                                                   Style="{StaticResource AtlasBodyTextStyle}"
-                                                   Text="Voice commands stay confirmation-first and use the same risk gates as typed input."
-                                                   TextTrimming="WordEllipsis" />
-                                    </StackPanel>
-                                </Border>
-
-                                <Border Grid.Column="2"
-                                        Padding="14"
-                                        Style="{StaticResource AtlasMicroPanelStyle}">
-                                    <StackPanel Spacing="6">
-                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="SESSION" />
-                                        <TextBlock x:Name="SessionStatusText"
-                                                   MaxLines="3"
-                                                   Style="{StaticResource AtlasBodyTextStyle}"
-                                                   Text="Atlas is standing by."
-                                                   TextTrimming="WordEllipsis" />
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </ScrollViewer>
-
-                        <ProgressBar x:Name="BusyProgressBar"
-                                     Grid.Row="3"
-                                     Grid.ColumnSpan="2"
-                                     Height="6"
-                                     IsIndeterminate="False"
-                                     ShowError="False"
-                                     ShowPaused="False" />
                     </Grid>
                 </Border>
 
                 <Frame x:Name="ContentFrame"
-                       Grid.Row="2"
-                       Margin="18,0,18,18" />
+                       Grid.Row="1"
+                       Margin="12,0,12,12" />
             </Grid>
         </NavigationView>
     </Grid>

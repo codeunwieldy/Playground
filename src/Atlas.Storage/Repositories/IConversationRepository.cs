@@ -54,6 +54,57 @@ public interface IConversationRepository
     /// Deletes a prompt trace by its identifier.
     /// </summary>
     Task<bool> DeletePromptTraceAsync(string traceId, CancellationToken ct = default);
+
+    // ── Compaction (C-035) ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns conversations eligible for compaction.
+    /// </summary>
+    Task<IReadOnlyList<CompactableConversation>> GetCompactableCandidatesAsync(DateTime olderThan, int minMessages, int limit = 100, CancellationToken ct = default);
+
+    /// <summary>
+    /// Persists a conversation summary record and returns its identifier.
+    /// </summary>
+    Task<string> SaveSummaryAsync(ConversationSummaryRecord summary, CancellationToken ct = default);
+
+    /// <summary>
+    /// Marks a conversation as compacted.
+    /// </summary>
+    Task MarkCompactedAsync(string conversationId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves summary records for a conversation.
+    /// </summary>
+    Task<IReadOnlyList<ConversationSummaryRecord>> GetSummariesForConversationAsync(string conversationId, CancellationToken ct = default);
+
+    // ── Summary query (C-039) ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Lists all conversation summaries with pagination.
+    /// </summary>
+    Task<IReadOnlyList<ConversationSummaryRecord>> ListSummariesAsync(int limit = 50, int offset = 0, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the total count of conversation summaries.
+    /// </summary>
+    Task<int> GetSummaryCountAsync(CancellationToken ct = default);
+
+    // ── Summary snapshot integration (C-043) ──────────────────────────────
+
+    /// <summary>
+    /// Returns the count of compacted summaries vs retained summaries.
+    /// </summary>
+    Task<(int CompactedCount, int RetainedCount)> GetSummaryCompactionCountsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the count of conversations that have been compacted vs not.
+    /// </summary>
+    Task<(int CompactedConversations, int NonCompactedConversations)> GetConversationCompactionCountsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the most recent summary creation timestamp.
+    /// </summary>
+    Task<DateTime?> GetMostRecentSummaryUtcAsync(CancellationToken ct = default);
 }
 
 /// <summary>
@@ -128,3 +179,23 @@ public sealed class PromptTrace
 /// <param name="Stage">The pipeline stage that generated this trace.</param>
 /// <param name="CreatedUtc">When the trace was recorded.</param>
 public sealed record PromptTraceSummary(string TraceId, string Stage, DateTime CreatedUtc);
+
+/// <summary>
+/// A compaction summary record for a conversation.
+/// </summary>
+public sealed class ConversationSummaryRecord
+{
+    public string SummaryId { get; set; } = Guid.NewGuid().ToString("N");
+    public string ConversationId { get; set; } = string.Empty;
+    public DateTime CoveredFromUtc { get; set; }
+    public DateTime CoveredUntilUtc { get; set; }
+    public int MessageCount { get; set; }
+    public string SummaryText { get; set; } = string.Empty;
+    public DateTime CreatedUtc { get; set; }
+    public bool IsCompacted { get; set; }
+}
+
+/// <summary>
+/// A conversation that is eligible for compaction.
+/// </summary>
+public sealed record CompactableConversation(string ConversationId, ConversationKind Kind, string Summary, int MessageCount, DateTime CreatedUtc);

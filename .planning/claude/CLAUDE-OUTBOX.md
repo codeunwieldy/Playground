@@ -14,6 +14,270 @@ For each update, include:
 
 ## Current Updates
 
+### C-032 Plan History Lineage and Source Filters
+
+- Task ID: C-032
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-032-PLAN-HISTORY-LINEAGE-AND-SOURCE-FILTERS.md`
+  - `.planning/claude/C-031-DUPLICATE-CLEANUP-PLAN-PROMOTION-AND-PERSISTENCE.md`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Storage/Repositories/IPlanRepository.cs`
+  - `src/Atlas.Storage/Repositories/PlanRepository.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPlanPromotionTests.cs`
+  - `.planning/claude/CLAUDE-OUTBOX.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+  - `spec/HANDOFF.md`
+- Files modified:
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added 2 additive column migrations on `plans` table: `source TEXT NOT NULL DEFAULT ''`, `source_session_id TEXT NOT NULL DEFAULT ''`
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added `Source` (ProtoMember 10) and `SourceSessionId` (ProtoMember 11) to `PlanGraph`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `Source` + `SourceSessionId` to `HistoryPlanSummary` (ProtoMember 7, 8), `HistoryPlanDetailResponse` (ProtoMember 4, 5), and `SourceFilter` to `HistoryListRequest` (ProtoMember 4)
+  - `src/Atlas.Storage/Repositories/IPlanRepository.cs` — extended `PlanSummary` record with `Source` + `SourceSessionId`, added `ListPlansAsync` overload with optional `sourceFilter` parameter
+  - `src/Atlas.Storage/Repositories/PlanRepository.cs` — persists `source` and `source_session_id` columns in `SavePlanAsync`, reads them in `ListPlansAsync`, implements filtered list query
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — wires lineage into `HandleHistorySnapshotAsync`, `HandleHistoryPlansAsync` (with source filter), `HandleHistoryPlanDetailAsync`, and sets `Source`/`SourceSessionId` on promoted plans in `HandlePromoteDuplicateCleanupPlanAsync`
+- Files created:
+  - `tests/Atlas.Service.Tests/PlanHistoryLineageTests.cs` — 8 tests for lineage metadata and source filtering
+- Lineage fields added:
+  - `PlanGraph.Source` — plan origin identifier (e.g. `"DuplicateCleanupPromotion"` or empty for normal plans)
+  - `PlanGraph.SourceSessionId` — inventory session ID the plan was promoted from (empty for normal plans)
+  - Schema: `plans.source`, `plans.source_session_id` columns with empty-string defaults for backward compatibility
+- Query/filter behavior added:
+  - `HistoryListRequest.SourceFilter` — when non-empty, `history/plans` route returns only plans matching the source
+  - `HistoryPlanSummary` and `HistoryPlanDetailResponse` include `Source` + `SourceSessionId`
+  - `history/snapshot` plan summaries also include lineage metadata
+  - Older plans with no lineage metadata are readable with empty-string defaults
+- Tests added and passing (8/8):
+  - `PromotedPlan_PersistsLineageMetadata` — promoted plan has `Source="DuplicateCleanupPromotion"` and `SourceSessionId` set
+  - `NormalPlan_HasEmptyLineage` — plan saved through normal flow has empty `Source`
+  - `ListPlans_ReturnsLineageInSummary` — `ListPlansAsync` populates `Source` and `SourceSessionId`
+  - `ListPlans_SourceFilter_ReturnOnlyMatchingPlans` — filter returns only promoted plans
+  - `ListPlans_SourceFilter_EmptyResultsHandled` — filter for non-existent source returns empty list
+  - `ListPlans_NoFilter_ReturnsAllPlans` — no filter returns both normal and promoted plans
+  - `OlderPlans_ReadableWithEmptyLineage` — plans saved before lineage columns have empty-string defaults
+  - `PlanDetail_SurfacesLineageTruth` — `GetPlanAsync` returns plan with lineage fields
+- Full test suite: 167 tests, all passing (including 9 existing C-031 promotion tests)
+
+### C-035 Conversation Compaction and Retention Summaries
+
+- Task ID: C-035
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-035-CONVERSATION-COMPACTION-AND-RETENTION-SUMMARIES.md`
+  - `src/Atlas.Storage/Repositories/IConversationRepository.cs`
+  - `src/Atlas.Storage/Repositories/ConversationRepository.cs`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+- Files created:
+  - `src/Atlas.Service/Services/ConversationCompactionService.cs` — deterministic, local-first compaction service
+  - `tests/Atlas.Service.Tests/ConversationCompactionTests.cs` — 9 tests
+- Files changed:
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added `conversation_summaries` table + index, additive `is_compacted` and `message_count` columns on `conversations`
+  - `src/Atlas.Storage/Repositories/IConversationRepository.cs` — added `GetCompactableCandidatesAsync`, `SaveSummaryAsync`, `MarkCompactedAsync`, `GetSummariesForConversationAsync` + new types `ConversationSummaryRecord`, `CompactableConversation`
+  - `src/Atlas.Storage/Repositories/ConversationRepository.cs` — implemented the four new methods, updated `SaveConversationAsync` to populate `message_count` and honor caller-supplied `CreatedUtc`
+- Key findings:
+  - Compaction is fully deterministic and local-first — no AI model calls required
+  - Summary generation extracts first/last messages + keyword frequency analysis, bounded to 1000 chars
+  - `is_compacted` flag prevents re-processing; idempotent across multiple runs
+  - Original conversations are preserved — compaction only adds summary metadata
+  - Older rows without `message_count`/`is_compacted` get default values (0) and remain readable
+- Tests (9 total, all passing):
+  - `CompactableCandidate_Selected` — old conversation with enough messages is found
+  - `RecentConversation_NotSelected` — within retention window, skipped
+  - `ShortConversation_NotSelected` — below message threshold, skipped
+  - `AlreadyCompacted_NotSelected` — compacted conversation is skipped
+  - `Compaction_GeneratesSummary` — summary saved with correct metadata
+  - `Compaction_MarksConversationCompacted` — is_compacted=1 after compaction
+  - `RepeatedCompaction_Idempotent` — second run finds nothing to compact
+  - `Summary_TruncatedToBound` — long conversation produces summary <= 1000 chars
+  - `BackwardCompatibility_OlderRowsReadable` — conversations without new columns still work
+
+### C-034 Safe Optimization Fix Application and Rollback
+
+- Task ID: C-034
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-034-SAFE-OPTIMIZATION-FIX-APPLICATION-AND-ROLLBACK.md`
+  - `src/Atlas.Service/Services/PlanExecutionService.cs`
+  - `src/Atlas.Service/Services/OptimizationScanner.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+- Files created:
+  - `src/Atlas.Service/Services/SafeOptimizationFixExecutor.cs` — applies/reverts optimization fixes with rollback states
+  - `tests/Atlas.Service.Tests/SafeOptimizationFixTests.cs` — 20 tests
+- Files changed:
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added `OptimizationRollbackState` (ProtoContract), `OptimizationFixResult`, `UndoCheckpoint.OptimizationRollbackStates` (ProtoMember 11)
+  - `src/Atlas.Service/Services/PlanExecutionService.cs` — replaced inline ApplyOptimizationFix with SafeOptimizationFixExecutor delegation, added RevertOptimizationFix via stored rollback state, undo path uses checkpoint rollback states
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs` — updated constructor to pass SafeOptimizationFixExecutor
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs` — updated constructor to pass SafeOptimizationFixExecutor
+- Key findings:
+  - Safe optimization fix kinds: TemporaryFiles (delete), CacheCleanup (delete), DuplicateArchives (quarantine), UserStartupEntry (registry disable)
+  - Blocked kinds: ScheduledTask, BackgroundApplication, LowDiskPressure — conservative posture
+  - TemporaryFiles/CacheCleanup are non-reversible (repopulate naturally); DuplicateArchives and UserStartupEntry are reversible
+  - Windows registry access gated behind `OperatingSystem.IsWindows()` + `[SupportedOSPlatform("windows")]`
+  - Rollback state stored as JSON in `OptimizationRollbackState.RollbackData`
+
+### C-033 VSS Checkpoint Eligibility and Metadata Foundations
+
+- Task ID: C-033
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-033-VSS-CHECKPOINT-ELIGIBILITY-AND-METADATA-FOUNDATIONS.md`
+  - `src/Atlas.Service/Services/PlanExecutionService.cs`
+  - `src/Atlas.Core/Planning/RollbackPlanner.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+- Files created:
+  - `src/Atlas.Service/Services/CheckpointEligibilityEvaluator.cs` — static deterministic evaluator
+  - `tests/Atlas.Service.Tests/CheckpointEligibilityTests.cs` — 13 tests
+- Files changed:
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added `UndoCheckpoint.CheckpointEligibility` (ProtoMember 7), `EligibilityReason` (8), `CoveredVolumes` (9), `VssSnapshotCreated` (10)
+  - `src/Atlas.Service/Services/PlanExecutionService.cs` — evaluates checkpoint eligibility after preflight (both live and dry-run), populates metadata on UndoCheckpoint, adds VSS deferred note when Required
+- Key findings:
+  - `CheckpointRequirement` enum: `NotNeeded`, `Recommended`, `Required`
+  - Required when: >= 5 destructive ops, cross-volume operations, or untrusted session
+  - Recommended when: any destructive op exists (DeleteToQuarantine, MergeDuplicateGroup, unsafe ApplyOptimizationFix)
+  - NotNeeded when: all operations are safe (CreateDirectory, MovePath, RenamePath, TemporaryFiles/CacheCleanup fixes)
+  - No VSS snapshot actually created (deferred to a later packet) — only eligibility evaluation and metadata stored
+  - All rules are deterministic and bounded, no randomness
+
+### Full test suite after parallel wave: 649 tests, all passing
+- Atlas.Core.Tests: 208
+- Atlas.AI.Tests: 74
+- Atlas.Storage.Tests: 158
+- Atlas.Service.Tests: 209
+
+### C-031 Duplicate Cleanup Plan Promotion and Persistence
+
+- Task ID: C-031
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-031-DUPLICATE-CLEANUP-PLAN-PROMOTION-AND-PERSISTENCE.md`
+  - `.planning/claude/C-030-DUPLICATE-CLEANUP-PLAN-MATERIALIZATION.md`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Storage/Repositories/IPlanRepository.cs`
+  - `src/Atlas.Storage/Repositories/PlanRepository.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPlanMaterializationTests.cs`
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPlanPreviewTests.cs`
+  - `.planning/claude/CLAUDE-OUTBOX.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+  - `spec/HANDOFF.md`
+- Files modified:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `PromoteDuplicateCleanupPlanRequest` (SessionId, MaxGroups, MaxOperationsPerGroup), `PromoteDuplicateCleanupPlanResponse` (Found, Promoted, SavedPlanId, IsNewlyPromoted, IncludedGroupCount, BlockedGroupCount, TotalPlannedOperations, ConfidenceThresholdUsed, Rationale, RollbackPosture, Scope, Categories, DegradedReasons, SourceSessionId)
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `inventory/duplicate-cleanup-plan-promote` route and `HandlePromoteDuplicateCleanupPlanAsync` handler; extracted shared `BuildPlanGraphFromCore` helper from C-030 materialization handler (C-030 behavior unchanged, all C-030 tests pass)
+- Files created:
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPlanPromotionTests.cs` — 9 tests for plan promotion
+- New route: `inventory/duplicate-cleanup-plan-promote` → `inventory/duplicate-cleanup-plan-promote-response`
+- How saved retained-cleanup plans now appear in standard plan history:
+  - Plans appear with `Scope="Duplicate Cleanup"` in `ListPlansAsync` / `history/plans`
+  - `Rationale` stored in the `summary` column for list display
+  - Full `PlanGraph` retrievable via `GetPlanAsync` / `history/plan-detail` using `SavedPlanId`
+  - Each `PlanOperation` carries `GroupId` linking back to source duplicate group
+  - `Categories = ["DuplicateCleanup"]` identifies the plan type for filtering
+  - `RollbackStrategy` preserves quarantine-first posture
+  - `RequiresReview = true` ensures human review before execution
+- Tests added and passing (9/9):
+  - `Promote_ValidSession_SavesPlanToRepository` — verifies plan persists and is retrievable
+  - `Promote_DegradedSession_RefusesPromotion` — trust gate blocks degraded sessions
+  - `Promote_AllBlocked_RefusesPromotion` — all-blocked groups refuse promotion
+  - `Promote_MissingSession_ReturnsNotFound` — missing session returns Found=false
+  - `Promote_SavedPlan_VisibleInPlanHistory` — promoted plan appears in ListPlansAsync
+  - `Promote_RepeatedPromotion_DeterministicContent` — two promotions produce same content, different PlanIds
+  - `Promote_BoundedLimits_Enforced` — group count respects MaxGroups limit
+  - `Promote_LineageTruth_PreservedInSavedPlan` — saved plan has Rationale, RollbackStrategy, Categories, GroupIds
+  - `Promote_NoDuplicates_RefusesPromotion` — no-duplicate session refuses promotion
+- All 8 C-030 materialization tests still pass (no regressions from helper extraction)
+- All 8 C-029 plan preview tests still pass
+
+### C-030 Duplicate Cleanup Plan Materialization
+
+- Task ID: C-030
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-030-DUPLICATE-CLEANUP-PLAN-MATERIALIZATION.md`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Service/Services/PlanExecutionService.cs`
+  - `src/Atlas.Storage/Repositories/IInventoryRepository.cs`
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPlanPreviewTests.cs`
+  - `.planning/claude/CLAUDE-OUTBOX.md`
+  - `.planning/claude/CLAUDE-INBOX.md`
+- Files modified:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `MaterializeDuplicateCleanupPlanRequest` (SessionId, MaxGroups, MaxOperationsPerGroup), `MaterializeDuplicateCleanupPlanResponse` (Found, CanMaterialize, MaterializedPlanId, Plan, IncludedGroupCount, BlockedGroupCount, TotalPlannedOperations, ConfidenceThresholdUsed, Rationale, RollbackPosture, IncludedGroups, BlockedGroups, DegradedReasons)
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `inventory/duplicate-cleanup-plan-materialize` route and `HandleMaterializeDuplicateCleanupPlanAsync` handler; refactored C-029 handler core logic into shared `BuildDuplicateCleanupPlanPreviewCoreAsync` helper and `DuplicateCleanupPlanPreviewCore` record
+- Files created:
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPlanMaterializationTests.cs` — 8 tests for plan materialization
+- New route: `inventory/duplicate-cleanup-plan-materialize` → `inventory/duplicate-cleanup-plan-materialize-response`
+- Materialized review fields now available:
+  - `Found` — whether the retained session exists
+  - `CanMaterialize` — whether the session can be materialized (false if degraded, all groups blocked, or no duplicates)
+  - `MaterializedPlanId` — stable GUID for this materialization
+  - `Plan` — standard `PlanGraph` with Scope, Rationale, Categories, Operations, RiskSummary, EstimatedBenefit, RequiresReview, RollbackStrategy
+  - `IncludedGroupCount` / `BlockedGroupCount` — group partition counts
+  - `TotalPlannedOperations` — total operations across included groups
+  - `ConfidenceThresholdUsed` — policy confidence threshold applied
+  - `Rationale` / `RollbackPosture` — bounded text summaries
+  - `IncludedGroups` / `BlockedGroups` — reuses C-029 types for group-level detail
+  - `DegradedReasons` — list of reasons materialization is blocked or degraded
+- Design rationale:
+  - `PlanGraph` and the duplicate preview shape diverge (group-first vs flat ops, no risk envelope, string-typed fields). The materialization response carries *both* a standard `PlanGraph` (for `ApplyPlanState` rendering) and the group-level summary (for duplicate-specific review). This gives the app maximum flexibility without forcing one shape into the other.
+  - Trust gate blocks materialization for degraded sessions (`IsTrusted=false`), consistent with C-019 trust-aware gating.
+  - Core plan preview logic extracted into a shared helper to avoid C-029/C-030 duplication. C-029 handler is now a thin wrapper around the shared core. All 8 C-029 tests continue to pass.
+- Tests added (8 total, all passing):
+  - `Materialize_ValidSession_ProducesPlanGraph` — successful materialization returns CanMaterialize=true, non-empty PlanGraph, stable MaterializedPlanId
+  - `Materialize_AllBlocked_CannotMaterialize` — all-blocked session returns CanMaterialize=false with degraded reasons
+  - `Materialize_DegradedSession_CannotMaterialize` — untrusted session returns CanMaterialize=false with trust-related degraded reason
+  - `Materialize_MissingSession_ReturnsNotFound` — missing session returns Found=false
+  - `Materialize_NoDuplicates_CannotMaterialize` — session with zero duplicate groups returns CanMaterialize=false
+  - `Materialize_BoundedLimits_Enforced` — MaxGroups limit is respected
+  - `Materialize_RationaleAndRollback_CarryThrough` — rationale and rollback posture populated on both response and PlanGraph
+  - `Materialize_PlanGraph_ContainsCorrectOperations` — PlanGraph operations match included groups exactly with correct GroupId, Kind, and Confidence
+
+### C-029 Duplicate Cleanup Plan Preview APIs
+
+- Task ID: C-029
+- Status: **done**
+- Files read:
+  - `src/Atlas.Core/Planning/SafeDuplicateCleanupPlanner.cs`
+  - `src/Atlas.Core/Planning/DuplicateActionEvaluator.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `.planning/claude/C-027-DUPLICATE-CLEANUP-PREVIEW-APIS.md`
+  - `.planning/claude/C-028-DUPLICATE-CLEANUP-BATCH-PREVIEW-APIS.md`
+  - `.planning/claude/CLAUDE-OUTBOX.md`
+  - `tests/Atlas.Service.Tests/DuplicateCleanupBatchPreviewTests.cs`
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPreviewTests.cs`
+- Files modified:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `DuplicateCleanupPlanPreviewRequest` (SessionId, MaxGroups, MaxOperationsPerGroup), `DuplicateCleanupPlanPreviewResponse` (Found, IncludedGroupCount, BlockedGroupCount, TotalPlannedOperations, ConfidenceThresholdUsed, Rationale, RollbackPosture, IncludedGroups, BlockedGroups), `PlanPreviewIncludedGroup` (GroupId, CanonicalPath, CleanupConfidence, OperationCount, Operations, ActionNotes), `PlanPreviewBlockedGroup` (GroupId, CanonicalPath, CleanupConfidence, RecommendedPosture, BlockedReasons)
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `inventory/duplicate-cleanup-plan-preview` route and `HandleDuplicateCleanupPlanPreviewAsync` handler
+- Files created:
+  - `tests/Atlas.Service.Tests/DuplicateCleanupPlanPreviewTests.cs` — 8 integration tests for plan preview composition
+- New route: `inventory/duplicate-cleanup-plan-preview` → `inventory/duplicate-cleanup-plan-preview-response`
+- Plan-preview fields now available:
+  - `Found` — whether the retained session exists
+  - `IncludedGroupCount` — number of groups eligible and included in the plan
+  - `BlockedGroupCount` — number of groups blocked by policy
+  - `TotalPlannedOperations` — total cleanup operations across all included groups
+  - `ConfidenceThresholdUsed` — policy confidence threshold applied
+  - `Rationale` — bounded rationale summary for the plan
+  - `RollbackPosture` — rollback-oriented notes for review surfaces
+  - `IncludedGroups` — list of eligible groups with per-group operations, canonical path, confidence, and action notes
+  - `BlockedGroups` — list of blocked groups with per-group blocked reasons, recommended posture, and canonical path
+- Tests added (8 total, all passing):
+  - `PlanPreview_EligibleGroups_ProduceBoundedPlan` — eligible groups produce bounded plan with operations
+  - `PlanPreview_BlockedGroups_StayOutOfIncludedSet` — blocked groups are separated truthfully
+  - `PlanPreview_MixedSession_TruthfulCounts` — included vs blocked counts match list lengths
+  - `PlanPreview_MissingSession_ReturnsNotFound` — missing session returns Found=false
+  - `PlanPreview_NoDuplicates_ReturnsEmptyPlan` — empty session returns zero counts
+  - `PlanPreview_BoundedGroupLimit_Enforced` — MaxGroups limit is respected
+  - `PlanPreview_RationaleAndRollback_ArePopulated` — rationale and rollback posture are non-empty
+  - `PlanPreview_AllBlocked_NoIncludedGroups` — all-blocked session has zero included groups
+- No UI files touched
+- No new shared-core helpers needed; reused `SafeDuplicateCleanupPlanner`, `DuplicateActionEvaluator`, and `CleanupOperationPreview` directly
+
 ### C-026 Duplicate Action Eligibility and Review APIs
 
 - Task ID: C-026
@@ -1683,3 +1947,200 @@ This definition is path-stable: a file that moved from one location to another a
 - No new repository methods or storage tables were needed
 - Reused `SafeDuplicateCleanupPlanner` and `DuplicateActionEvaluator` per-group as-is
 - No `src/Atlas.App/**` files were touched
+
+### C-036 Actual VSS Snapshot Orchestration and Persistence
+
+- Task ID: C-036
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-036-ACTUAL-VSS-SNAPSHOT-ORCHESTRATION-AND-PERSISTENCE.md`
+  - `src/Atlas.Service/Services/CheckpointEligibilityEvaluator.cs`
+  - `src/Atlas.Service/Services/PlanExecutionService.cs`
+  - `src/Atlas.Service/Program.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `tests/Atlas.Service.Tests/CheckpointEligibilityTests.cs`
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs`
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs`
+- Files modified:
+  - `src/Atlas.Service/Services/VssSnapshotOrchestrator.cs` — **created**: VSS orchestration service with `TryCreateSnapshots(CheckpointRequirement, List<string>, bool)`, `VssSnapshotStatus` enum (NotNeeded/Success/Unavailable/Failed/PartialCoverage/Skipped), `VssSnapshotResult`, `VssSnapshotReference`; invokes `vssadmin create shadow /for=<volume>` on Windows, parses snapshot ID from stdout via regex, fails closed on non-Windows/empty volumes/process failures
+  - `src/Atlas.Service/Services/PlanExecutionService.cs` — added `VssSnapshotOrchestrator` constructor param; after `CheckpointEligibilityEvaluator.Evaluate()`, calls `TryCreateSnapshots()`; Required + VSS failure → blocks live execution with error; `PopulateCheckpointEligibility` now takes `VssSnapshotResult` and populates `VssSnapshotCreated`, `VssSnapshotReferences`, and truthful notes
+  - `src/Atlas.Service/Program.cs` — registered `VssSnapshotOrchestrator` as singleton
+  - `tests/Atlas.Service.Tests/VssSnapshotOrchestrationTests.cs` — **created**: 8 tests covering not-needed/recommended/required eligibility, dry-run skipping, non-Windows unavailable, empty volumes, preview mode, and truthful note population
+  - `tests/Atlas.Service.Tests/CheckpointEligibilityTests.cs` — updated `ExecutionService_RequiredEligibility_AddsNote` → `ExecutionService_RequiredEligibility_BlocksWhenVssFails` to reflect C-036 fail-closed semantics (Required + VSS failure in non-elevated env → execution blocked)
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs` — added `NoOpOptimizationRepository` stub; added `VssSnapshotOrchestrator` + `IOptimizationRepository` to `PlanExecutionService` constructor calls
+  - `tests/Atlas.Service.Tests/DeltaScanningTests.cs` — added `VssSnapshotOrchestrator` + `NoOpOptimizationRepository` to `CreateExecutionService` helper
+- Key findings:
+  - Fail-closed semantics correctly block execution when checkpoint is Required and VSS creation fails
+  - Non-Windows environments and dry-run/preview modes return early without attempting VSS
+  - Snapshot ID parsed from vssadmin stdout via `Shadow Copy ID: \{([^}]+)\}` regex
+- Risks: VSS requires elevated privileges; all tests verify behavior in non-elevated environment
+- No `src/Atlas.App/**` files were touched
+
+### C-037 Optimization Execution History and Rollback Details
+
+- Task ID: C-037
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-037-OPTIMIZATION-EXECUTION-HISTORY-AND-ROLLBACK-DETAILS.md`
+  - `src/Atlas.Service/Services/SafeOptimizationFixExecutor.cs`
+  - `src/Atlas.Service/Services/PlanExecutionService.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+  - `src/Atlas.Storage/Repositories/IOptimizationRepository.cs`
+  - `src/Atlas.Storage/Repositories/OptimizationRepository.cs`
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs`
+- Files modified:
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added `OptimizationExecutionAction` enum (Applied=0, Reverted=1, Failed=2) and `OptimizationExecutionRecord` class with 10 ProtoMembers (RecordId, PlanId, FixKind, Target, Action, Success, IsReversible, RollbackNote, Message, CreatedUtc)
+  - `src/Atlas.Storage/AtlasDatabaseBootstrapper.cs` — added `optimization_execution_history` table with columns (record_id, plan_id, fix_kind, target, action, success, is_reversible, rollback_note, message, created_utc) and two indexes (ix_optexec_plan, ix_optexec_target)
+  - `src/Atlas.Storage/Repositories/IOptimizationRepository.cs` — added `SaveExecutionRecordAsync`, `GetExecutionHistoryAsync`, `GetExecutionHistoryForTargetAsync`
+  - `src/Atlas.Storage/Repositories/OptimizationRepository.cs` — implemented all three new methods plus `ReadExecutionRecordsAsync` helper
+  - `src/Atlas.Service/Services/PlanExecutionService.cs` — added `IOptimizationRepository` constructor param; after each `ApplyOptimizationFix`/`RevertOptimizationFix`, persists `OptimizationExecutionRecord` via best-effort `PersistExecutionRecord()` helper (silently catches failures); `RevertOptimizationFix` now takes `planId` parameter
+  - `tests/Atlas.Service.Tests/OptimizationExecutionHistoryTests.cs` — **created**: 9 tests covering save/retrieve round-trip, plan filter, target filter, action enum values, failed action persistence, auto-generated record ID, default CreatedUtc, rollback note persistence, empty history
+- Key findings:
+  - Execution history is best-effort (persistence failures don't block plan execution)
+  - Records are durable and queryable by plan ID or target path
+  - `CreatedUtc` defaults to `DateTime.UtcNow` when not explicitly set
+- No `src/Atlas.App/**` files were touched
+
+### C-038 Conversation Compaction Worker and Retention Orchestration
+
+- Task ID: C-038
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-038-CONVERSATION-COMPACTION-WORKER-AND-RETENTION-ORCHESTRATION.md`
+  - `src/Atlas.Service/Services/ConversationCompactionService.cs`
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs`
+  - `src/Atlas.Service/Program.cs`
+- Files modified:
+  - `src/Atlas.Service/Services/AtlasServiceOptions.cs` — added `EnableConversationCompaction` (default false), `CompactionInterval` (default 6h), `CompactionRetentionWindow` (default 7d), `CompactionMinMessages` (default 20), `CompactionMaxCandidatesPerCycle` (default 100)
+  - `src/Atlas.Service/Services/ConversationCompactionService.cs` — `CompactAsync` signature changed to add `int maxCandidates = 100` parameter, passed as `limit:` to repository
+  - `src/Atlas.Service/Services/ConversationCompactionWorker.cs` — **created**: `BackgroundService` that periodically runs `CompactAsync()` with configured interval; checks `EnableConversationCompaction` each cycle (hot-reload safe); catches all exceptions per cycle (never crashes the worker); logs compacted count only when > 0
+  - `src/Atlas.Service/Program.cs` — registered `ConversationCompactionService` as singleton and `ConversationCompactionWorker` as hosted service
+  - `tests/Atlas.Service.Tests/ConversationCompactionWorkerTests.cs` — **created**: 12 tests covering disabled compaction, no candidates, recent-only conversations, below-min-messages, bounded max candidates, limit passed correctly, summaries persisted with limit, zero limit, configured options passthrough, no-op behavior, cancellation support
+- Key findings:
+  - Worker is hot-reload safe: checks `EnableConversationCompaction` each cycle
+  - `CompactionMaxCandidatesPerCycle` bounds work per cycle to prevent unbounded batch sizes
+  - All options configurable via `AtlasServiceOptions` (IOptions pattern)
+- No `src/Atlas.App/**` files were touched
+
+### C-039 Conversation Summary Query APIs
+
+- Task ID: C-039
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-039-CONVERSATION-SUMMARY-QUERY-APIS.md`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Storage/Repositories/IConversationRepository.cs`
+  - `src/Atlas.Storage/Repositories/ConversationRepository.cs`
+- Files modified:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `ConversationSummaryListRequest` (Limit, Offset), `ConversationSummaryListResponse` (Summaries, TotalCount), `ConversationSummaryDetailRequest` (ConversationId), `ConversationSummaryDetailResponse` (Found, Summary), `ConversationSummaryDto` (ConversationId, Summary, MessageCount, CreatedUtc, CompactedUtc)
+  - `src/Atlas.Storage/Repositories/IConversationRepository.cs` — added `ListSummariesAsync(int limit, int offset)` and `GetSummaryCountAsync()`
+  - `src/Atlas.Storage/Repositories/ConversationRepository.cs` — implemented both new methods with SQLite queries against `conversation_summaries` table
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added routes `"conversation/summaries"` and `"conversation/summary-detail"` with handlers `HandleConversationSummariesAsync` and `HandleConversationSummaryDetailAsync`
+  - `tests/Atlas.Service.Tests/ConversationSummaryQueryTests.cs` — **created**: 7 tests covering list with summaries, empty list, pagination offset/limit, detail found, detail not found, total count accuracy, default limit/offset
+- Key findings:
+  - Read-only pipe routes — no mutations, pure query APIs
+  - Pagination via Limit/Offset with TotalCount for client-side paging
+  - Detail endpoint returns `Found=false` for unknown conversation IDs
+- No `src/Atlas.App/**` files were touched
+
+### Combined Test Results (C-036 through C-039)
+
+- Full test suite: **246 tests, all passing**, 0 failures, 0 regressions
+- New tests added: 36 (8 + 9 + 12 + 7)
+- Build: 0 warnings, 0 errors
+- Constructor compatibility: Fixed 4 existing test files that referenced old `PlanExecutionService` 5-param constructor (now 7 params with `VssSnapshotOrchestrator` + `IOptimizationRepository`); added `NoOpOptimizationRepository` stub for tests that don't exercise optimization history
+
+### C-040 VSS Checkpoint Detail Query APIs
+
+- Task ID: C-040
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-040-VSS-CHECKPOINT-DETAIL-QUERY-APIS.md`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Storage/Repositories/IRecoveryRepository.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+- Files modified:
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `HandleCheckpointDetailAsync` handler method (route `checkpoint/detail` was already wired at line 101). Maps `UndoCheckpoint` → `CheckpointDetailResponse` with counts for inverse operations, quarantine items, and optimization rollback states.
+- Files created:
+  - `tests/Atlas.Service.Tests/CheckpointDetailQueryTests.cs` — 5 tests: FoundCheckpoint_ReturnsFullDetail, MissingCheckpoint_ReturnsNotFound, OlderCheckpoint_WithoutVssMetadata_ReturnsCleanDefaults, VssSnapshotReferences_AreBounded, OptimizationRollbackState_CountIsExposed
+- Key findings:
+  - Route was already present in dispatch switch; only the handler body was missing
+  - Response exposes counts (not full lists) for inverse operations, quarantine items, and optimization rollback states to keep wire size bounded
+  - Older checkpoints without VSS metadata return clean defaults (empty string eligibility, empty lists, false for VssSnapshotCreated)
+- No `src/Atlas.App/**` files were touched
+
+### C-041 Optimization Execution History Rollups
+
+- Task ID: C-041
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-041-OPTIMIZATION-EXECUTION-HISTORY-ROLLUPS.md`
+  - `src/Atlas.Storage/Repositories/IOptimizationRepository.cs`
+  - `src/Atlas.Storage/Repositories/OptimizationRepository.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+- Files modified:
+  - `src/Atlas.Core/Contracts/DomainModels.cs` — added `OptimizationExecutionRollup` ProtoContract (Kind, TotalCount, AppliedCount, RevertedCount, FailedCount, ReversibleCount, MostRecentUtc) and `OptimizationExecutionSummary` ProtoContract (RecordId, Kind, Target, Action, Success, IsReversible, HasRollbackData, CreatedUtc)
+  - `src/Atlas.Storage/Repositories/IOptimizationRepository.cs` — added 3 methods: `GetExecutionRollupsAsync`, `GetRecentExecutionSummariesAsync`, `GetExecutionRecordAsync`
+  - `src/Atlas.Storage/Repositories/OptimizationRepository.cs` — implemented all 3 methods with SQL GROUP BY aggregation for rollups, paginated summary query, and single record lookup
+  - `tests/Atlas.Service.Tests/PlanExecutionServiceTests.cs` — added 3 stub implementations to `NoOpOptimizationRepository` for new interface methods
+- Files created:
+  - `tests/Atlas.Service.Tests/OptimizationExecutionRollupTests.cs` — 6 tests: EmptyHistory_ProducesEmptyRollups, SingleKind_AllApplied_ProducesCorrectRollup, MixedApplyAndRevert_GroupedCorrectly, MultipleKinds_ProduceSeparateRollups, ExecutionSummary_MapsFieldsCorrectly, Ordering_MostRecentFirst
+- Key findings:
+  - Rollups use in-memory LINQ grouping (matching test helper pattern) since the pipe route is not yet wired (repo/service-side only per spec)
+  - Stayed out of PipeContracts.cs and AtlasPipeServerWorker.cs as spec required (parallel-safe)
+- No `src/Atlas.App/**` files were touched
+
+### C-042 Safe Optimization Fix Request APIs
+
+- Task ID: C-042
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-042-SAFE-OPTIMIZATION-FIX-REQUEST-APIS.md`
+  - `src/Atlas.Service/Services/SafeOptimizationFixExecutor.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Core/Contracts/DomainModels.cs`
+- Files modified:
+  - `src/Atlas.Service/Services/SafeOptimizationFixExecutor.cs` — added public `UnsafeKinds` static property exposing `BlockedKinds` for use by request handlers
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added 6 contracts: `OptimizationFixPreviewRequest/Response`, `OptimizationFixApplyRequest/Response`, `OptimizationFixRevertRequest/Response` with ProtoContract/ProtoMember attributes
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added `SafeOptimizationFixExecutor` to constructor DI; added 3 routes (`optimization/fix-preview`, `optimization/fix-apply`, `optimization/fix-revert`); added `HandleOptimizationFixPreviewAsync`, `HandleOptimizationFixApplyAsync`, `HandleOptimizationFixRevertAsync` handlers
+- Files created:
+  - `tests/Atlas.Service.Tests/SafeOptimizationFixRequestTests.cs` — 10 tests: SafeKind_IsAccepted (4 theory cases), UnsafeKind_IsRejected (4 theory cases), Preview_ForSafeKind_ReturnsEligible, Preview_ForUnsafeKind_ReturnsNotSafe, Preview_ForRecommendationOnly_ReturnsCannotAutoFix, Preview_MissingFinding_ReturnsNotFound, ApplyResponse_TracksRollbackState, ApplyResponse_UnsafeKind_Fails, RevertResponse_RecordsRevertId, RevertResponse_MissingRecord_Fails
+- Key findings:
+  - Preview checks both `CanAutoFix` and `UnsafeKinds` for eligibility
+  - Apply persists `OptimizationExecutionRecord` with action tracking (Applied/Failed)
+  - Revert handler validates rollback data exists before recording revert; records a new execution record with `Reverted` action
+  - Safe kinds: TemporaryFiles, CacheCleanup, DuplicateArchives, UserStartupEntry. Unsafe: ScheduledTask, BackgroundApplication, LowDiskPressure, Unknown
+- No `src/Atlas.App/**` files were touched
+
+### C-043 Conversation Summary Snapshot Integration
+
+- Task ID: C-043
+- Status: **done**
+- Files read:
+  - `.planning/claude/C-043-CONVERSATION-SUMMARY-SNAPSHOT-INTEGRATION.md`
+  - `src/Atlas.Storage/Repositories/IConversationRepository.cs`
+  - `src/Atlas.Storage/Repositories/ConversationRepository.cs`
+  - `src/Atlas.Core/Contracts/PipeContracts.cs`
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs`
+- Files modified:
+  - `src/Atlas.Core/Contracts/PipeContracts.cs` — added `ConversationSummarySnapshotRequest` (empty) and `ConversationSummarySnapshotResponse` (TotalSummaryCount, CompactedConversationCount, NonCompactedConversationCount, CompactedSummaryCount, RetainedSummaryCount, MostRecentSummaryUtc)
+  - `src/Atlas.Storage/Repositories/IConversationRepository.cs` — added 3 methods: `GetSummaryCompactionCountsAsync`, `GetConversationCompactionCountsAsync`, `GetMostRecentSummaryUtcAsync`
+  - `src/Atlas.Storage/Repositories/ConversationRepository.cs` — implemented all 3 methods with SQL `SUM(CASE WHEN...)` aggregation for compaction counting and `MAX(created_utc)` for most recent timestamp
+  - `src/Atlas.Service/Services/AtlasPipeServerWorker.cs` — added route `conversation/summary-snapshot` and `HandleConversationSummarySnapshotAsync` handler that aggregates all counts
+- Files created:
+  - `tests/Atlas.Service.Tests/ConversationSummarySnapshotTests.cs` — 5 tests: EmptyState_ProducesZeroCounts, MixedCompactionState_SumsCorrectly, AllCompacted_ZeroRetained, NoneCompacted_AllRetained, MostRecentSummaryUtc_RoundTrips
+- Key findings:
+  - Snapshot is a parameterless aggregation endpoint — no pagination needed
+  - Compaction counts split into summary-level (compacted vs retained) and conversation-level (compacted vs non-compacted)
+  - `MostRecentSummaryUtc` returns empty string when no summaries exist
+- No `src/Atlas.App/**` files were touched
+
+### Combined Test Results (C-040 through C-043)
+
+- Full test suite: **278 tests, all passing**, 0 failures, 0 regressions
+- New tests added: 26 (5 + 6 + 10 + 5)
+- Build: 0 warnings, 0 errors
+- Constructor compatibility: Extended `NoOpOptimizationRepository` with 3 additional stub methods for C-041 interface additions

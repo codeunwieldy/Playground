@@ -46,6 +46,40 @@ public interface IOptimizationRepository
     /// Deletes all findings of a specific kind.
     /// </summary>
     Task<int> DeleteFindingsByKindAsync(OptimizationKind kind, CancellationToken ct = default);
+
+    // ── Execution history (C-037) ──────────────────────────────────────────
+
+    /// <summary>
+    /// Persists an optimization execution record and returns its identifier.
+    /// </summary>
+    Task<string> SaveExecutionRecordAsync(OptimizationExecutionRecord record, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves execution history with optional plan filter and pagination.
+    /// </summary>
+    Task<IReadOnlyList<OptimizationExecutionRecord>> GetExecutionHistoryAsync(string? planId = null, int limit = 50, int offset = 0, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves execution history for a specific target path or resource.
+    /// </summary>
+    Task<IReadOnlyList<OptimizationExecutionRecord>> GetExecutionHistoryForTargetAsync(string target, CancellationToken ct = default);
+
+    // ── Execution history rollups (C-041) ──────────────────────────────────
+
+    /// <summary>
+    /// Returns bounded rollup summaries of execution history grouped by optimization kind.
+    /// </summary>
+    Task<IReadOnlyList<OptimizationExecutionRollup>> GetExecutionRollupsAsync(int limit = 20, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns compact execution summary projections for recent history.
+    /// </summary>
+    Task<IReadOnlyList<OptimizationExecutionSummary>> GetRecentExecutionSummariesAsync(int limit = 50, int offset = 0, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves a single execution record by its identifier.
+    /// </summary>
+    Task<OptimizationExecutionRecord?> GetExecutionRecordAsync(string recordId, CancellationToken ct = default);
 }
 
 /// <summary>

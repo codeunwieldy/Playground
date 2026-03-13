@@ -23,6 +23,11 @@ public interface IPlanRepository
     Task<IReadOnlyList<PlanSummary>> ListPlansAsync(int limit = 50, int offset = 0, CancellationToken ct = default);
 
     /// <summary>
+    /// Lists plan summaries with pagination and optional source filter (C-032).
+    /// </summary>
+    Task<IReadOnlyList<PlanSummary>> ListPlansAsync(int limit, int offset, string? sourceFilter, CancellationToken ct = default);
+
+    /// <summary>
     /// Deletes a plan by its identifier.
     /// </summary>
     Task<bool> DeletePlanAsync(string planId, CancellationToken ct = default);
@@ -50,4 +55,6 @@ public interface IPlanRepository
 /// <param name="Scope">The scope or target of the plan.</param>
 /// <param name="Summary">Brief description of the plan.</param>
 /// <param name="CreatedUtc">When the plan was created.</param>
-public sealed record PlanSummary(string PlanId, string Scope, string Summary, DateTime CreatedUtc);
+/// <param name="Source">Plan origin (e.g. "DuplicateCleanupPromotion" or empty for normal plans).</param>
+/// <param name="SourceSessionId">Inventory session ID the plan was promoted from, when applicable.</param>
+public sealed record PlanSummary(string PlanId, string Scope, string Summary, DateTime CreatedUtc, string Source = "", string SourceSessionId = "");

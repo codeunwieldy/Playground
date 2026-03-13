@@ -31,4 +31,21 @@ public sealed class AtlasServiceOptions
     /// Default: 0.5 (50%).
     /// </summary>
     public double MaxDegradedRatio { get; set; } = 0.5;
+
+    // ── Conversation compaction (C-038) ─────────────────────────────────
+
+    /// <summary>Whether background conversation compaction is enabled.</summary>
+    public bool EnableConversationCompaction { get; set; }
+
+    /// <summary>Interval between compaction cycles.</summary>
+    public TimeSpan CompactionInterval { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>Conversations older than this window are eligible for compaction.</summary>
+    public TimeSpan CompactionRetentionWindow { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>Minimum message count for a conversation to be compactable.</summary>
+    public int CompactionMinMessages { get; set; } = 10;
+
+    /// <summary>Maximum candidates to process per compaction cycle.</summary>
+    public int CompactionMaxCandidatesPerCycle { get; set; } = 50;
 }

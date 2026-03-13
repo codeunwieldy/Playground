@@ -131,6 +131,7 @@ public sealed class HistoryListRequest
     [ProtoMember(1)] public int Limit { get; set; } = 50;
     [ProtoMember(2)] public int Offset { get; set; }
     [ProtoMember(3)] public string Stage { get; set; } = string.Empty;
+    [ProtoMember(4)] public string SourceFilter { get; set; } = string.Empty;
 }
 
 [ProtoContract]
@@ -151,6 +152,8 @@ public sealed class HistoryPlanDetailResponse
     [ProtoMember(1)] public bool Found { get; set; }
     [ProtoMember(2)] public PlanGraph Plan { get; set; } = new();
     [ProtoMember(3)] public List<ExecutionBatch> Batches { get; set; } = new();
+    [ProtoMember(4)] public string Source { get; set; } = string.Empty;
+    [ProtoMember(5)] public string SourceSessionId { get; set; } = string.Empty;
 }
 
 [ProtoContract]
@@ -188,6 +191,8 @@ public sealed class HistoryPlanSummary
     [ProtoMember(4)] public int OperationCount { get; set; }
     [ProtoMember(5)] public bool RequiresReview { get; set; }
     [ProtoMember(6)] public string CreatedUtc { get; set; } = string.Empty;
+    [ProtoMember(7)] public string Source { get; set; } = string.Empty;
+    [ProtoMember(8)] public string SourceSessionId { get; set; } = string.Empty;
 }
 
 [ProtoContract]
@@ -198,6 +203,32 @@ public sealed class HistoryCheckpointSummary
     [ProtoMember(3)] public int OperationCount { get; set; }
     [ProtoMember(4)] public int QuarantineCount { get; set; }
     [ProtoMember(5)] public string CreatedUtc { get; set; } = string.Empty;
+}
+
+// ── Checkpoint detail (C-040) ───────────────────────────────────────────
+
+[ProtoContract]
+public sealed class CheckpointDetailRequest
+{
+    [ProtoMember(1)] public string CheckpointId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class CheckpointDetailResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string CheckpointId { get; set; } = string.Empty;
+    [ProtoMember(3)] public string BatchId { get; set; } = string.Empty;
+    [ProtoMember(4)] public string CheckpointEligibility { get; set; } = string.Empty;
+    [ProtoMember(5)] public string EligibilityReason { get; set; } = string.Empty;
+    [ProtoMember(6)] public List<string> CoveredVolumes { get; set; } = new();
+    [ProtoMember(7)] public bool VssSnapshotCreated { get; set; }
+    [ProtoMember(8)] public List<string> VssSnapshotReferences { get; set; } = new();
+    [ProtoMember(9)] public int InverseOperationCount { get; set; }
+    [ProtoMember(10)] public int QuarantineItemCount { get; set; }
+    [ProtoMember(11)] public int OptimizationRollbackStateCount { get; set; }
+    [ProtoMember(12)] public List<string> Notes { get; set; } = new();
+    [ProtoMember(13)] public string CreatedUtc { get; set; } = string.Empty;
 }
 
 [ProtoContract]
@@ -659,4 +690,221 @@ public sealed class BatchGroupPreviewSummary
     [ProtoMember(6)] public List<string> BlockedReasons { get; set; } = new();
     [ProtoMember(7)] public List<string> ActionNotes { get; set; } = new();
     [ProtoMember(8)] public double CleanupConfidence { get; set; }
+}
+
+// ── Duplicate cleanup plan preview contracts (C-029) ─────────────────────
+
+[ProtoContract]
+public sealed class DuplicateCleanupPlanPreviewRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public int MaxGroups { get; set; } = 50;
+    [ProtoMember(3)] public int MaxOperationsPerGroup { get; set; } = 20;
+}
+
+[ProtoContract]
+public sealed class DuplicateCleanupPlanPreviewResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public int IncludedGroupCount { get; set; }
+    [ProtoMember(3)] public int BlockedGroupCount { get; set; }
+    [ProtoMember(4)] public int TotalPlannedOperations { get; set; }
+    [ProtoMember(5)] public double ConfidenceThresholdUsed { get; set; }
+    [ProtoMember(6)] public string Rationale { get; set; } = string.Empty;
+    [ProtoMember(7)] public string RollbackPosture { get; set; } = string.Empty;
+    [ProtoMember(8)] public List<PlanPreviewIncludedGroup> IncludedGroups { get; set; } = new();
+    [ProtoMember(9)] public List<PlanPreviewBlockedGroup> BlockedGroups { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class PlanPreviewIncludedGroup
+{
+    [ProtoMember(1)] public string GroupId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string CanonicalPath { get; set; } = string.Empty;
+    [ProtoMember(3)] public double CleanupConfidence { get; set; }
+    [ProtoMember(4)] public int OperationCount { get; set; }
+    [ProtoMember(5)] public List<CleanupOperationPreview> Operations { get; set; } = new();
+    [ProtoMember(6)] public List<string> ActionNotes { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class PlanPreviewBlockedGroup
+{
+    [ProtoMember(1)] public string GroupId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string CanonicalPath { get; set; } = string.Empty;
+    [ProtoMember(3)] public double CleanupConfidence { get; set; }
+    [ProtoMember(4)] public DuplicateActionPosture RecommendedPosture { get; set; }
+    [ProtoMember(5)] public List<string> BlockedReasons { get; set; } = new();
+}
+
+// ── Duplicate cleanup plan materialization contracts (C-030) ──────────
+
+[ProtoContract]
+public sealed class MaterializeDuplicateCleanupPlanRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public int MaxGroups { get; set; } = 50;
+    [ProtoMember(3)] public int MaxOperationsPerGroup { get; set; } = 20;
+}
+
+[ProtoContract]
+public sealed class MaterializeDuplicateCleanupPlanResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public bool CanMaterialize { get; set; }
+    [ProtoMember(3)] public string MaterializedPlanId { get; set; } = string.Empty;
+    [ProtoMember(4)] public PlanGraph Plan { get; set; } = new();
+    [ProtoMember(5)] public int IncludedGroupCount { get; set; }
+    [ProtoMember(6)] public int BlockedGroupCount { get; set; }
+    [ProtoMember(7)] public int TotalPlannedOperations { get; set; }
+    [ProtoMember(8)] public double ConfidenceThresholdUsed { get; set; }
+    [ProtoMember(9)] public string Rationale { get; set; } = string.Empty;
+    [ProtoMember(10)] public string RollbackPosture { get; set; } = string.Empty;
+    [ProtoMember(11)] public List<PlanPreviewIncludedGroup> IncludedGroups { get; set; } = new();
+    [ProtoMember(12)] public List<PlanPreviewBlockedGroup> BlockedGroups { get; set; } = new();
+    [ProtoMember(13)] public List<string> DegradedReasons { get; set; } = new();
+}
+
+// ── Duplicate cleanup plan promotion contracts (C-031) ────────────
+
+[ProtoContract]
+public sealed class PromoteDuplicateCleanupPlanRequest
+{
+    [ProtoMember(1)] public string SessionId { get; set; } = string.Empty;
+    [ProtoMember(2)] public int MaxGroups { get; set; } = 50;
+    [ProtoMember(3)] public int MaxOperationsPerGroup { get; set; } = 20;
+}
+
+[ProtoContract]
+public sealed class PromoteDuplicateCleanupPlanResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public bool Promoted { get; set; }
+    [ProtoMember(3)] public string SavedPlanId { get; set; } = string.Empty;
+    [ProtoMember(4)] public bool IsNewlyPromoted { get; set; }
+    [ProtoMember(5)] public int IncludedGroupCount { get; set; }
+    [ProtoMember(6)] public int BlockedGroupCount { get; set; }
+    [ProtoMember(7)] public int TotalPlannedOperations { get; set; }
+    [ProtoMember(8)] public double ConfidenceThresholdUsed { get; set; }
+    [ProtoMember(9)] public string Rationale { get; set; } = string.Empty;
+    [ProtoMember(10)] public string RollbackPosture { get; set; } = string.Empty;
+    [ProtoMember(11)] public string Scope { get; set; } = string.Empty;
+    [ProtoMember(12)] public List<string> Categories { get; set; } = new();
+    [ProtoMember(13)] public List<string> DegradedReasons { get; set; } = new();
+    [ProtoMember(14)] public string SourceSessionId { get; set; } = string.Empty;
+}
+
+// ── Conversation summary query contracts (C-039) ──────────────────────
+
+[ProtoContract]
+public sealed class ConversationSummaryListRequest
+{
+    [ProtoMember(1)] public int Limit { get; set; } = 50;
+    [ProtoMember(2)] public int Offset { get; set; }
+}
+
+[ProtoContract]
+public sealed class ConversationSummaryListResponse
+{
+    [ProtoMember(1)] public List<ConversationSummaryDto> Summaries { get; set; } = new();
+    [ProtoMember(2)] public int TotalCount { get; set; }
+}
+
+[ProtoContract]
+public sealed class ConversationSummaryDetailRequest
+{
+    [ProtoMember(1)] public string ConversationId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class ConversationSummaryDetailResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string ConversationId { get; set; } = string.Empty;
+    [ProtoMember(3)] public List<ConversationSummaryDto> Summaries { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class ConversationSummaryDto
+{
+    [ProtoMember(1)] public string SummaryId { get; set; } = string.Empty;
+    [ProtoMember(2)] public string ConversationId { get; set; } = string.Empty;
+    [ProtoMember(3)] public string CoveredFromUtc { get; set; } = string.Empty;
+    [ProtoMember(4)] public string CoveredUntilUtc { get; set; } = string.Empty;
+    [ProtoMember(5)] public int MessageCount { get; set; }
+    [ProtoMember(6)] public string SummaryText { get; set; } = string.Empty;
+    [ProtoMember(7)] public string CreatedUtc { get; set; } = string.Empty;
+    [ProtoMember(8)] public bool IsCompacted { get; set; }
+}
+
+// ── Safe optimization fix request contracts (C-042) ───────────────────────
+
+[ProtoContract]
+public sealed class OptimizationFixPreviewRequest
+{
+    [ProtoMember(1)] public string FindingId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class OptimizationFixPreviewResponse
+{
+    [ProtoMember(1)] public bool Found { get; set; }
+    [ProtoMember(2)] public string FindingId { get; set; } = string.Empty;
+    [ProtoMember(3)] public OptimizationKind Kind { get; set; }
+    [ProtoMember(4)] public string Target { get; set; } = string.Empty;
+    [ProtoMember(5)] public bool IsSafeKind { get; set; }
+    [ProtoMember(6)] public bool CanAutoFix { get; set; }
+    [ProtoMember(7)] public bool RequiresApproval { get; set; }
+    [ProtoMember(8)] public string RollbackPlan { get; set; } = string.Empty;
+    [ProtoMember(9)] public string Reason { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class OptimizationFixApplyRequest
+{
+    [ProtoMember(1)] public string FindingId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class OptimizationFixApplyResponse
+{
+    [ProtoMember(1)] public bool Success { get; set; }
+    [ProtoMember(2)] public string FindingId { get; set; } = string.Empty;
+    [ProtoMember(3)] public OptimizationKind Kind { get; set; }
+    [ProtoMember(4)] public string Message { get; set; } = string.Empty;
+    [ProtoMember(5)] public bool HasRollbackState { get; set; }
+    [ProtoMember(6)] public bool IsReversible { get; set; }
+    [ProtoMember(7)] public string ExecutionRecordId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class OptimizationFixRevertRequest
+{
+    [ProtoMember(1)] public string ExecutionRecordId { get; set; } = string.Empty;
+}
+
+[ProtoContract]
+public sealed class OptimizationFixRevertResponse
+{
+    [ProtoMember(1)] public bool Success { get; set; }
+    [ProtoMember(2)] public string ExecutionRecordId { get; set; } = string.Empty;
+    [ProtoMember(3)] public OptimizationKind Kind { get; set; }
+    [ProtoMember(4)] public string Message { get; set; } = string.Empty;
+    [ProtoMember(5)] public string RevertRecordId { get; set; } = string.Empty;
+}
+
+// ── Conversation summary snapshot integration (C-043) ─────────────────────
+
+[ProtoContract]
+public sealed class ConversationSummarySnapshotRequest { }
+
+[ProtoContract]
+public sealed class ConversationSummarySnapshotResponse
+{
+    [ProtoMember(1)] public int TotalSummaryCount { get; set; }
+    [ProtoMember(2)] public int CompactedConversationCount { get; set; }
+    [ProtoMember(3)] public int NonCompactedConversationCount { get; set; }
+    [ProtoMember(4)] public int CompactedSummaryCount { get; set; }
+    [ProtoMember(5)] public int RetainedSummaryCount { get; set; }
+    [ProtoMember(6)] public string MostRecentSummaryUtc { get; set; } = string.Empty;
 }

@@ -42,6 +42,8 @@ builder.Services.AddSingleton<IAtlasPlanningClient>(serviceProvider =>
 });
 
 builder.Services.AddSingleton<FileScanner>();
+builder.Services.AddSingleton<SafeOptimizationFixExecutor>();
+builder.Services.AddSingleton<VssSnapshotOrchestrator>();
 builder.Services.AddSingleton<PlanExecutionService>();
 builder.Services.AddSingleton<OptimizationScanner>();
 
@@ -58,6 +60,8 @@ builder.Services.AddSingleton<IRecoveryRepository, RecoveryRepository>();
 builder.Services.AddSingleton<IOptimizationRepository, OptimizationRepository>();
 builder.Services.AddSingleton<IConfigurationRepository, ConfigurationRepository>();
 builder.Services.AddSingleton<IConversationRepository, ConversationRepository>();
+builder.Services.AddSingleton<ConversationCompactionService>();
+builder.Services.AddHostedService<ConversationCompactionWorker>();
 builder.Services.AddSingleton<IInventoryRepository, InventoryRepository>();
 builder.Services.AddSingleton<IUsnCheckpointRepository, UsnCheckpointRepository>();
 

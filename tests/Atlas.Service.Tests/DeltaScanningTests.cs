@@ -916,7 +916,10 @@ public sealed class DeltaScanningTests : IDisposable
             new AtlasPolicyEngine(),
             new RollbackPlanner(),
             opts,
-            inventoryRepo);
+            inventoryRepo,
+            new SafeOptimizationFixExecutor(opts),
+            new VssSnapshotOrchestrator(),
+            new NoOpOptimizationRepository());
     }
 
     [Fact]

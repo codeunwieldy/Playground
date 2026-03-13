@@ -2,398 +2,178 @@
     x:Class="Atlas.App.Views.PlansPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <ScrollViewer>
-        <StackPanel Spacing="20" Padding="28,22,28,32">
-            <StackPanel.ChildrenTransitions>
-                <TransitionCollection>
-                    <EntranceThemeTransition />
-                </TransitionCollection>
-            </StackPanel.ChildrenTransitions>
+    <Grid>
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="PlanStates">
+                <VisualState x:Name="CompactPlanState" />
+                <VisualState x:Name="WidePlanState">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1500" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="PageContent.Padding" Value="28,22,28,34" />
+                        <Setter Target="ContextColumn.Width" Value="360" />
+                        <Setter Target="ContextRow.Height" Value="0" />
+                        <Setter Target="ContextCard.(Grid.Row)" Value="0" />
+                        <Setter Target="ContextCard.(Grid.Column)" Value="1" />
+                        <Setter Target="OperationsColumn.Width" Value="360" />
+                        <Setter Target="OperationsRow.Height" Value="0" />
+                        <Setter Target="ReviewCard.(Grid.Row)" Value="0" />
+                        <Setter Target="ReviewCard.(Grid.Column)" Value="1" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
 
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="24">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="REORGANIZATION PREVIEW" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding PlanSummary}" TextWrapping="Wrap" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding RiskSummary}" TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <Button Click="OnPreviewExecutionClick" Style="{StaticResource AtlasSecondaryButtonStyle}" Content="Preview execution" IsEnabled="{Binding CanPreviewExecution}" />
-                        <Button Click="OnExecutePlanClick" Style="{StaticResource AtlasPrimaryButtonStyle}" Content="Execute through service" IsEnabled="{Binding CanExecutePlan}" />
-                    </StackPanel>
-                </StackPanel>
-            </Border>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="PageContent"
+                        Padding="20,18,20,28"
+                        Spacing="16">
+                <Border Padding="24"
+                        Style="{StaticResource AtlasMissionDeckStyle}">
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="220" />
+                        </Grid.ColumnDefinitions>
 
-            <ScrollViewer HorizontalScrollMode="Enabled"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollMode="Disabled"
-                          VerticalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding PlanMetrics}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="20" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Width="240" Padding="18" Style="{StaticResource AtlasCardStyle}">
-                                <StackPanel Spacing="6">
-                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                    <TextBlock Style="{StaticResource AtlasMetricValueStyle}" Text="{Binding Value}" />
-                                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
+                        <StackPanel Spacing="12">
+                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="PLAN REVIEW" />
+                            <TextBlock Style="{StaticResource AtlasHeroTextStyle}" Text="{Binding PlanSummary}" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding RiskSummary}" TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <Button Click="OnPromoteCleanupPlanClick"
+                                        Style="{StaticResource AtlasSecondaryButtonStyle}"
+                                        Content="Save retained cleanup plan"
+                                        IsEnabled="{Binding CanPromoteRetainedCleanupPlan}" />
+                                <Button Click="OnPreviewExecutionClick"
+                                        Style="{StaticResource AtlasSecondaryButtonStyle}"
+                                        Content="Preview execution"
+                                        IsEnabled="{Binding CanPreviewExecution}" />
+                                <Button Click="OnExecutePlanClick"
+                                        Style="{StaticResource AtlasPrimaryButtonStyle}"
+                                        Content="Execute through service"
+                                        IsEnabled="{Binding CanExecutePlan}" />
+                            </StackPanel>
+                        </StackPanel>
 
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="SCAN DRIFT CONTEXT" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="What shifted between the latest stored scans before planning" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding DriftReviewSummaryText}" TextWrapping="Wrap" />
+                        <Border Grid.Column="1"
+                                Padding="18"
+                                Style="{StaticResource AtlasTelemetryPanelStyle}">
+                            <StackPanel Spacing="8">
+                                <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="REVIEW POSTURE" />
+                                <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}"
+                                           Text="{Binding PlanSignalSummaryText}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}"
+                                           Text="{Binding ScanTrustSummaryText}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
 
-                    <ScrollViewer HorizontalScrollMode="Enabled"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled"
-                                  VerticalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding DriftReviewCards}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="18" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                        <StackPanel Spacing="8">
-                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
-                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="SCAN TRUST CONTEXT" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="How much Atlas trusts the retained inventory behind this plan" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding ScanTrustSummaryText}" TextWrapping="Wrap" />
-
-                    <ScrollViewer HorizontalScrollMode="Enabled"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled"
-                                  VerticalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding ScanTrustSignals}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="18" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                        <StackPanel Spacing="8">
-                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                            <TextBlock Style="{StaticResource AtlasSignalValueStyle}" Text="{Binding Value}" />
-                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="SCAN PROVENANCE CONTEXT" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="How Atlas built the inventory underlying this plan" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding ScanProvenanceSummaryText}" TextWrapping="Wrap" />
-
-                    <ScrollViewer HorizontalScrollMode="Enabled"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled"
-                                  VerticalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding ScanProvenanceSignals}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="18" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                        <StackPanel Spacing="8">
-                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                            <TextBlock Style="{StaticResource AtlasSignalValueStyle}" Text="{Binding Value}" />
-                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="CHANGED PATH SAMPLE" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Bounded file evidence behind this plan's drift window" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding DriftFileSampleSummaryText}" TextWrapping="Wrap" />
-
-                    <ScrollViewer HorizontalScrollMode="Enabled"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled"
-                                  VerticalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding DriftFileSampleCards}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="18" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                        <StackPanel Spacing="8">
-                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
-                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="DRIFT HOTSPOTS" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="What kinds of files are shifting most before this plan" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding DriftHotspotSummaryText}" TextWrapping="Wrap" />
-
-                    <ScrollViewer HorizontalScrollMode="Enabled"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled"
-                                  VerticalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding DriftHotspotCards}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="18" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                        <StackPanel Spacing="8">
-                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
-                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="FILE EXPLAINABILITY" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Why one representative file matters before this plan executes" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding FileExplainabilitySummaryText}" TextWrapping="Wrap" />
-
-                    <ScrollViewer HorizontalScrollMode="Enabled"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled"
-                                  VerticalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding FileExplainabilityCards}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="18" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                        <StackPanel Spacing="8">
-                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
-                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="DUPLICATE DRILL-IN" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Why one retained duplicate group matters, and how much cleanup the retained session could absorb" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding DuplicateDetailSummaryText}" TextWrapping="Wrap" />
-
-                    <ScrollViewer HorizontalScrollMode="Enabled"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled"
-                                  VerticalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding DuplicateDetailCards}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="18" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                        <StackPanel Spacing="8">
-                                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
-                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <ScrollViewer HorizontalScrollMode="Enabled"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollMode="Disabled"
-                          VerticalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding PlanSignals}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="20" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Width="280" Padding="18" Style="{StaticResource AtlasPanelStyle}">
-                                <StackPanel Spacing="8">
-                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
-                                    <TextBlock Style="{StaticResource AtlasSignalValueStyle}" Text="{Binding Value}" />
-                                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
-
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="BLOCKED REASONS" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="What could still stop this batch" />
-                    <ItemsControl ItemsSource="{Binding PlanBlockedReasons}">
+                <ScrollViewer HorizontalScrollMode="Enabled"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollMode="Disabled"
+                              VerticalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding PlanMetrics}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="16" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,0,0,10" ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Ellipse Width="8" Height="8" Margin="0,7,0,0" Fill="{StaticResource AtlasCopperBrush}" />
-                                    <TextBlock Grid.Column="1"
-                                               Style="{StaticResource AtlasBodyTextStyle}"
-                                               Text="{Binding}"
-                                               TextWrapping="Wrap" />
-                                </Grid>
+                                <Border Width="240" Padding="16" Style="{StaticResource AtlasMicroPanelStyle}">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
+                                        <TextBlock Style="{StaticResource AtlasMetricValueStyle}" Text="{Binding Value}" />
+                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                </StackPanel>
-            </Border>
+                </ScrollViewer>
 
-            <Border Style="{StaticResource AtlasCardStyle}" Padding="22">
-                <StackPanel Spacing="10">
-                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="STRUCTURE DIFF" />
-                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Before and after, at a glance" />
-                    <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding PlanDiffNarrativeText}" TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-
-            <ScrollViewer HorizontalScrollMode="Enabled"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollMode="Disabled"
-                          VerticalScrollBarVisibility="Disabled">
-                <Grid ColumnSpacing="20">
+                <Grid ColumnSpacing="16"
+                      RowSpacing="16">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="420" />
-                        <ColumnDefinition Width="420" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition x:Name="ContextColumn" Width="*" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition x:Name="ContextRow" Height="Auto" />
+                    </Grid.RowDefinitions>
 
-                    <Border Style="{StaticResource AtlasCardStyle}" Padding="20">
-                        <StackPanel Spacing="14">
-                            <Rectangle Height="4" RadiusX="2" RadiusY="2" Fill="{StaticResource AtlasLineBrush}" />
-                            <StackPanel Spacing="6">
-                                <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="CURRENT LAYOUT" />
-                                <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="What Atlas sees now" />
-                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="A read-only view of how files are currently spread across the mutable workspace." TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ItemsControl ItemsSource="{Binding CurrentStructureGroups}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Margin="0,0,0,12" Padding="16" Style="{StaticResource AtlasPanelStyle}">
-                                            <StackPanel Spacing="10">
-                                                <Grid ColumnSpacing="12">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
-                                                    <Border Grid.Column="1" Style="{StaticResource AtlasBadgeStyle}">
-                                                        <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="{Binding Value}" />
-                                                    </Border>
-                                                </Grid>
-                                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                                <TextBlock FontSize="12" Foreground="{StaticResource AtlasTextBrush}" Opacity="0.84" Text="{Binding Sample}" TextWrapping="Wrap" />
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                    <Border Padding="22"
+                            Style="{StaticResource AtlasStagePanelStyle}">
+                        <StackPanel Spacing="12">
+                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="STRUCTURE DIFF" />
+                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding PlanDiffNarrativeText}" TextWrapping="Wrap" />
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Spacing="10">
+                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="CURRENT LAYOUT" />
+                                    <ItemsControl ItemsSource="{Binding CurrentStructureGroups}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource AtlasMicroPanelStyle}">
+                                                    <StackPanel Spacing="4">
+                                                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
+                                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Value}" />
+                                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="1" Spacing="10">
+                                    <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="PROPOSED LAYOUT" />
+                                    <ItemsControl ItemsSource="{Binding ProposedStructureGroups}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource AtlasMicroPanelStyle}">
+                                                    <StackPanel Spacing="4">
+                                                        <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
+                                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Value}" />
+                                                        <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Grid>
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="1" Style="{StaticResource AtlasCardStyle}" Padding="20">
-                        <StackPanel Spacing="14">
-                            <Rectangle Height="4" RadiusX="2" RadiusY="2" Fill="{StaticResource AtlasAccentBrush}" />
-                            <StackPanel Spacing="6">
-                                <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="PROPOSED LAYOUT" />
-                                <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Where the approved plan lands" />
-                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="Atlas turns free-form file spread into explicit anchors, placements, and quarantine-first review." TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ItemsControl ItemsSource="{Binding ProposedStructureGroups}">
+                    <Border x:Name="ContextCard"
+                            Grid.Row="1"
+                            Padding="22"
+                            Style="{StaticResource AtlasStagePanelStyle}">
+                        <StackPanel Spacing="12">
+                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="PLAN CONTEXT" />
+                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Trust, provenance, and drift behind the plan" />
+                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding ScanTrustSummaryText}" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding ScanProvenanceSummaryText}" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding DriftReviewSummaryText}" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding ScanTrustSignals}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Margin="0,0,0,12" Padding="16" Style="{StaticResource AtlasPanelStyle}">
-                                            <StackPanel Spacing="10">
-                                                <Grid ColumnSpacing="12">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
-                                                    <Border Grid.Column="1" Style="{StaticResource AtlasBadgeStyle}">
-                                                        <TextBlock Foreground="{StaticResource AtlasBadgeTextBrush}" Text="{Binding Value}" />
-                                                    </Border>
-                                                </Grid>
+                                        <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource AtlasMicroPanelStyle}">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
+                                                <TextBlock Style="{StaticResource AtlasSignalValueStyle}" Text="{Binding Value}" />
                                                 <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
-                                                <TextBlock FontSize="12" Foreground="{StaticResource AtlasTextBrush}" Opacity="0.84" Text="{Binding Sample}" TextWrapping="Wrap" />
                                             </StackPanel>
                                         </Border>
                                     </DataTemplate>
@@ -402,26 +182,27 @@
                         </StackPanel>
                     </Border>
                 </Grid>
-            </ScrollViewer>
 
-            <ScrollViewer HorizontalScrollMode="Enabled"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollMode="Disabled"
-                          VerticalScrollBarVisibility="Disabled">
-                <Grid ColumnSpacing="20">
+                <Grid ColumnSpacing="16"
+                      RowSpacing="16">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="700" />
-                        <ColumnDefinition Width="340" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition x:Name="OperationsColumn" Width="*" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition x:Name="OperationsRow" Height="Auto" />
+                    </Grid.RowDefinitions>
 
-                    <Border Style="{StaticResource AtlasCardStyle}" Padding="20">
+                    <Border Padding="22"
+                            Style="{StaticResource AtlasStagePanelStyle}">
                         <StackPanel Spacing="12">
                             <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="PLANNED OPERATIONS" />
-                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Incoming operations" />
+                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Validated operations ready for review" />
                             <ItemsControl ItemsSource="{Binding PlanOperations}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Margin="0,0,0,12" Padding="16" Style="{StaticResource AtlasPanelStyle}">
+                                        <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource AtlasMicroPanelStyle}">
                                             <StackPanel Spacing="6">
                                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                                     <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Kind}" />
@@ -439,53 +220,71 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="1" Style="{StaticResource AtlasCardStyle}" Padding="20">
+                    <Border x:Name="ReviewCard"
+                            Grid.Row="1"
+                            Padding="22"
+                            Style="{StaticResource AtlasStagePanelStyle}">
                         <StackPanel Spacing="12">
-                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="ROLLBACK STORY" />
-                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding UndoSummary}" TextWrapping="Wrap" />
-                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="Atlas keeps the plan review surface tied to rollback metadata, even in preview mode." TextWrapping="Wrap" />
-                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding ConnectionModeDetail}" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="REVIEW EVIDENCE" />
+                            <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Duplicates, explainability, blocked reasons, and retained cleanup plan posture" />
+                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding DuplicateDetailSummaryText}" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding PersistedPlanSummaryText}" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding FileExplainabilitySummaryText}" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding DuplicateDetailCards}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource AtlasMicroPanelStyle}">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="{Binding Eyebrow}" />
+                                                <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="{Binding Title}" TextWrapping="Wrap" />
+                                                <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl ItemsSource="{Binding PlanBlockedReasons}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,10" Padding="14" Style="{StaticResource AtlasMicroPanelStyle}">
+                                            <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding}" TextWrapping="Wrap" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
                     </Border>
                 </Grid>
-            </ScrollViewer>
 
-            <ScrollViewer HorizontalScrollMode="Enabled"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollMode="Disabled"
-                          VerticalScrollBarVisibility="Disabled">
-                <Grid ColumnSpacing="20">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="320" />
-                        <ColumnDefinition Width="320" />
-                        <ColumnDefinition Width="320" />
-                    </Grid.ColumnDefinitions>
+                <Border Padding="22"
+                        Style="{StaticResource AtlasStagePanelStyle}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
 
-                    <Border Style="{StaticResource AtlasCardStyle}" Padding="20">
                         <StackPanel Spacing="10">
                             <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="RATIONALE" />
                             <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="Why Atlas chose this shape" />
                             <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding PlanRationaleText}" TextWrapping="Wrap" />
                         </StackPanel>
-                    </Border>
 
-                    <Border Grid.Column="1" Style="{StaticResource AtlasCardStyle}" Padding="20">
-                        <StackPanel Spacing="10">
+                        <StackPanel Grid.Column="1" Spacing="10">
                             <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="EXPECTED BENEFIT" />
                             <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="What improves if you approve it" />
                             <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding PlanBenefitText}" TextWrapping="Wrap" />
                         </StackPanel>
-                    </Border>
 
-                    <Border Grid.Column="2" Style="{StaticResource AtlasCardStyle}" Padding="20">
-                        <StackPanel Spacing="10">
+                        <StackPanel Grid.Column="2" Spacing="10">
                             <TextBlock Style="{StaticResource AtlasEyebrowStyle}" Text="ROLLBACK STRATEGY" />
                             <TextBlock Style="{StaticResource AtlasSectionHeadingStyle}" Text="How Atlas gets back out" />
                             <TextBlock Style="{StaticResource AtlasBodyTextStyle}" Text="{Binding PlanRollbackText}" TextWrapping="Wrap" />
                         </StackPanel>
-                    </Border>
-                </Grid>
-            </ScrollViewer>
-        </StackPanel>
-    </ScrollViewer>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
 </Page>

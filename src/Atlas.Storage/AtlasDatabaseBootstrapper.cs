@@ -206,6 +206,45 @@ public sealed class AtlasDatabaseBootstrapper(StorageOptions options)
             last_usn INTEGER NOT NULL,
             updated_utc TEXT NOT NULL
         );
+        """,
+
+        // ── Conversation summaries (C-035) ──────────────────────────────────
+        """
+        CREATE TABLE IF NOT EXISTS conversation_summaries (
+            summary_id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            covered_from_utc TEXT NOT NULL,
+            covered_until_utc TEXT NOT NULL,
+            message_count INTEGER NOT NULL,
+            summary_text TEXT NOT NULL,
+            created_utc TEXT NOT NULL,
+            is_compacted INTEGER NOT NULL DEFAULT 0
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_conversation_summaries_conv ON conversation_summaries (conversation_id);
+        """,
+
+        // ── Optimization execution history (C-037) ──────────────────────────
+        """
+        CREATE TABLE IF NOT EXISTS optimization_execution_history (
+            record_id TEXT PRIMARY KEY,
+            plan_id TEXT NOT NULL,
+            fix_kind TEXT NOT NULL,
+            target TEXT NOT NULL,
+            action TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            is_reversible INTEGER NOT NULL,
+            rollback_note TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            created_utc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_opt_exec_history_plan ON optimization_execution_history (plan_id);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_opt_exec_history_target ON optimization_execution_history (target);
         """
     ];
 
@@ -219,6 +258,14 @@ public sealed class AtlasDatabaseBootstrapper(StorageOptions options)
         "ALTER TABLE scan_sessions ADD COLUMN delta_source TEXT NOT NULL DEFAULT '';",
         "ALTER TABLE scan_sessions ADD COLUMN baseline_session_id TEXT NOT NULL DEFAULT '';",
         "ALTER TABLE scan_sessions ADD COLUMN is_trusted INTEGER NOT NULL DEFAULT 1;",
-        "ALTER TABLE scan_sessions ADD COLUMN composition_note TEXT NOT NULL DEFAULT '';"
+        "ALTER TABLE scan_sessions ADD COLUMN composition_note TEXT NOT NULL DEFAULT '';",
+
+        // ── Plan lineage (C-032) ────────────────────────────────────────────
+        "ALTER TABLE plans ADD COLUMN source TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE plans ADD COLUMN source_session_id TEXT NOT NULL DEFAULT '';",
+
+        // ── Conversation compaction (C-035) ─────────────────────────────────
+        "ALTER TABLE conversations ADD COLUMN is_compacted INTEGER NOT NULL DEFAULT 0;",
+        "ALTER TABLE conversations ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0;"
     ];
 }

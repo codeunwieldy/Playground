@@ -156,6 +156,10 @@ public sealed class PlanGraph
     [ProtoMember(7)] public string EstimatedBenefit { get; set; } = string.Empty;
     [ProtoMember(8)] public bool RequiresReview { get; set; }
     [ProtoMember(9)] public string RollbackStrategy { get; set; } = string.Empty;
+
+    // ── Lineage (C-032) ────────────────────────────────────────────────────
+    [ProtoMember(10)] public string Source { get; set; } = string.Empty;
+    [ProtoMember(11)] public string SourceSessionId { get; set; } = string.Empty;
 }
 
 [ProtoContract]
@@ -200,6 +204,60 @@ public sealed class UndoCheckpoint
     [ProtoMember(4)] public List<QuarantineItem> QuarantineItems { get; set; } = new();
     [ProtoMember(5)] public List<string> Notes { get; set; } = new();
     [ProtoMember(6)] public List<string> VssSnapshotReferences { get; set; } = new();
+
+    // ── Checkpoint eligibility metadata (C-033) ─────────────────────────────
+    [ProtoMember(7)] public string CheckpointEligibility { get; set; } = string.Empty;
+    [ProtoMember(8)] public string EligibilityReason { get; set; } = string.Empty;
+    [ProtoMember(9)] public List<string> CoveredVolumes { get; set; } = new();
+    [ProtoMember(10)] public bool VssSnapshotCreated { get; set; }
+
+    // ── Optimization rollback states (C-034) ────────────────────────────────
+    [ProtoMember(11)] public List<OptimizationRollbackState> OptimizationRollbackStates { get; set; } = new();
+}
+
+[ProtoContract]
+public sealed class OptimizationRollbackState
+{
+    [ProtoMember(1)] public OptimizationKind Kind { get; set; }
+    [ProtoMember(2)] public string Target { get; set; } = string.Empty;
+    [ProtoMember(3)] public bool IsReversible { get; set; }
+    [ProtoMember(4)] public string RollbackData { get; set; } = string.Empty;
+    [ProtoMember(5)] public string Description { get; set; } = string.Empty;
+}
+
+public sealed class OptimizationFixResult
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public OptimizationRollbackState? RollbackState { get; set; }
+}
+
+/// <summary>
+/// The action performed on an optimization fix.
+/// </summary>
+public enum OptimizationExecutionAction
+{
+    Applied = 0,
+    Reverted = 1,
+    Failed = 2
+}
+
+/// <summary>
+/// A durable record of an optimization fix execution outcome.
+/// </summary>
+[ProtoContract]
+public sealed class OptimizationExecutionRecord
+{
+    [ProtoMember(1)] public string RecordId { get; set; } = Guid.NewGuid().ToString("N");
+    [ProtoMember(2)] public string PlanId { get; set; } = string.Empty;
+    [ProtoMember(3)] public OptimizationKind FixKind { get; set; }
+    [ProtoMember(4)] public string Target { get; set; } = string.Empty;
+    [ProtoMember(5)] public OptimizationExecutionAction Action { get; set; }
+    [ProtoMember(6)] public bool Success { get; set; }
+    [ProtoMember(7)] public bool IsReversible { get; set; }
+    [ProtoMember(8)] public string RollbackNote { get; set; } = string.Empty;
+    [ProtoMember(9)] public string Message { get; set; } = string.Empty;
+    [ProtoMember(10)] public DateTime CreatedUtc { get; set; }
 }
 
 [ProtoContract]
@@ -212,4 +270,37 @@ public sealed class OptimizationFinding
     [ProtoMember(5)] public bool CanAutoFix { get; set; }
     [ProtoMember(6)] public bool RequiresApproval { get; set; }
     [ProtoMember(7)] public string RollbackPlan { get; set; } = string.Empty;
+}
+
+// ── Optimization execution rollup (C-041) ─────────────────────────────────
+
+/// <summary>
+/// A bounded rollup summary of optimization execution history grouped by kind.
+/// </summary>
+[ProtoContract]
+public sealed class OptimizationExecutionRollup
+{
+    [ProtoMember(1)] public OptimizationKind Kind { get; set; }
+    [ProtoMember(2)] public int TotalCount { get; set; }
+    [ProtoMember(3)] public int AppliedCount { get; set; }
+    [ProtoMember(4)] public int RevertedCount { get; set; }
+    [ProtoMember(5)] public int FailedCount { get; set; }
+    [ProtoMember(6)] public int ReversibleCount { get; set; }
+    [ProtoMember(7)] public string MostRecentUtc { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// A compact summary projection of one execution record for listing.
+/// </summary>
+[ProtoContract]
+public sealed class OptimizationExecutionSummary
+{
+    [ProtoMember(1)] public string RecordId { get; set; } = string.Empty;
+    [ProtoMember(2)] public OptimizationKind Kind { get; set; }
+    [ProtoMember(3)] public string Target { get; set; } = string.Empty;
+    [ProtoMember(4)] public OptimizationExecutionAction Action { get; set; }
+    [ProtoMember(5)] public bool Success { get; set; }
+    [ProtoMember(6)] public bool IsReversible { get; set; }
+    [ProtoMember(7)] public bool HasRollbackData { get; set; }
+    [ProtoMember(8)] public string CreatedUtc { get; set; } = string.Empty;
 }

@@ -21,15 +21,17 @@ public sealed class ConversationRepository(SqliteConnectionFactory connectionFac
 
         var json = JsonSerializer.Serialize(conversation, JsonOptions);
         var payload = AtlasJsonCompression.Compress(json);
-        var createdUtc = DateTime.UtcNow.ToString("o");
+        var createdUtc = conversation.CreatedUtc != default
+            ? conversation.CreatedUtc.ToString("o")
+            : DateTime.UtcNow.ToString("o");
 
         await using var connection = connectionFactory.CreateConnection();
         await connection.OpenAsync(ct);
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO conversations (conversation_id, kind, summary, payload, created_utc, expires_utc)
-            VALUES (@conversation_id, @kind, @summary, @payload, @created_utc, @expires_utc)
+            INSERT INTO conversations (conversation_id, kind, summary, payload, created_utc, expires_utc, message_count)
+            VALUES (@conversation_id, @kind, @summary, @payload, @created_utc, @expires_utc, @message_count)
             """;
         command.Parameters.AddWithValue("@conversation_id", conversation.ConversationId);
         command.Parameters.AddWithValue("@kind", conversation.Kind.ToString());
@@ -40,6 +42,7 @@ public sealed class ConversationRepository(SqliteConnectionFactory connectionFac
             conversation.ExpiresUtc.HasValue
                 ? conversation.ExpiresUtc.Value.ToString("o")
                 : (object)DBNull.Value);
+        command.Parameters.AddWithValue("@message_count", conversation.Messages.Count);
 
         await command.ExecuteNonQueryAsync(ct);
 
@@ -299,6 +302,233 @@ public sealed class ConversationRepository(SqliteConnectionFactory connectionFac
 
         var rowsAffected = await command.ExecuteNonQueryAsync(ct);
         return rowsAffected > 0;
+    }
+
+    // ── Compaction (C-035) ──────────────────────────────────────────────────
+
+    public async Task<IReadOnlyList<CompactableConversation>> GetCompactableCandidatesAsync(DateTime olderThan, int minMessages, int limit = 100, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT conversation_id, kind, summary, message_count, created_utc
+            FROM conversations
+            WHERE is_compacted = 0
+              AND created_utc < @older_than
+              AND message_count >= @min_messages
+            ORDER BY created_utc ASC
+            LIMIT @limit
+            """;
+        command.Parameters.AddWithValue("@older_than", olderThan.ToString("o"));
+        command.Parameters.AddWithValue("@min_messages", minMessages);
+        command.Parameters.AddWithValue("@limit", limit);
+
+        var results = new List<CompactableConversation>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            results.Add(new CompactableConversation(
+                ConversationId: reader.GetString(0),
+                Kind: Enum.Parse<ConversationKind>(reader.GetString(1)),
+                Summary: reader.GetString(2),
+                MessageCount: reader.GetInt32(3),
+                CreatedUtc: DateTime.Parse(reader.GetString(4), null, DateTimeStyles.RoundtripKind)
+            ));
+        }
+
+        return results;
+    }
+
+    public async Task<string> SaveSummaryAsync(ConversationSummaryRecord summary, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(summary.SummaryId))
+        {
+            summary.SummaryId = Guid.NewGuid().ToString("N");
+        }
+
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO conversation_summaries (summary_id, conversation_id, covered_from_utc, covered_until_utc, message_count, summary_text, created_utc, is_compacted)
+            VALUES (@summary_id, @conversation_id, @covered_from_utc, @covered_until_utc, @message_count, @summary_text, @created_utc, @is_compacted)
+            """;
+        command.Parameters.AddWithValue("@summary_id", summary.SummaryId);
+        command.Parameters.AddWithValue("@conversation_id", summary.ConversationId);
+        command.Parameters.AddWithValue("@covered_from_utc", summary.CoveredFromUtc.ToString("o"));
+        command.Parameters.AddWithValue("@covered_until_utc", summary.CoveredUntilUtc.ToString("o"));
+        command.Parameters.AddWithValue("@message_count", summary.MessageCount);
+        command.Parameters.AddWithValue("@summary_text", summary.SummaryText);
+        command.Parameters.AddWithValue("@created_utc", DateTime.UtcNow.ToString("o"));
+        command.Parameters.AddWithValue("@is_compacted", summary.IsCompacted ? 1 : 0);
+
+        await command.ExecuteNonQueryAsync(ct);
+        return summary.SummaryId;
+    }
+
+    public async Task MarkCompactedAsync(string conversationId, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conversations SET is_compacted = 1 WHERE conversation_id = @conversation_id";
+        command.Parameters.AddWithValue("@conversation_id", conversationId);
+
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<ConversationSummaryRecord>> GetSummariesForConversationAsync(string conversationId, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT summary_id, conversation_id, covered_from_utc, covered_until_utc, message_count, summary_text, created_utc, is_compacted
+            FROM conversation_summaries
+            WHERE conversation_id = @conversation_id
+            ORDER BY created_utc ASC
+            """;
+        command.Parameters.AddWithValue("@conversation_id", conversationId);
+
+        var results = new List<ConversationSummaryRecord>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            results.Add(new ConversationSummaryRecord
+            {
+                SummaryId = reader.GetString(0),
+                ConversationId = reader.GetString(1),
+                CoveredFromUtc = DateTime.Parse(reader.GetString(2), null, DateTimeStyles.RoundtripKind),
+                CoveredUntilUtc = DateTime.Parse(reader.GetString(3), null, DateTimeStyles.RoundtripKind),
+                MessageCount = reader.GetInt32(4),
+                SummaryText = reader.GetString(5),
+                CreatedUtc = DateTime.Parse(reader.GetString(6), null, DateTimeStyles.RoundtripKind),
+                IsCompacted = reader.GetInt32(7) != 0
+            });
+        }
+
+        return results;
+    }
+
+    // ── Summary query (C-039) ──────────────────────────────────────────────
+
+    public async Task<IReadOnlyList<ConversationSummaryRecord>> ListSummariesAsync(int limit = 50, int offset = 0, CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT summary_id, conversation_id, covered_from_utc, covered_until_utc, message_count, summary_text, created_utc, is_compacted
+            FROM conversation_summaries
+            ORDER BY created_utc DESC
+            LIMIT @limit OFFSET @offset
+            """;
+        command.Parameters.AddWithValue("@limit", limit);
+        command.Parameters.AddWithValue("@offset", offset);
+
+        var results = new List<ConversationSummaryRecord>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            results.Add(new ConversationSummaryRecord
+            {
+                SummaryId = reader.GetString(0),
+                ConversationId = reader.GetString(1),
+                CoveredFromUtc = DateTime.Parse(reader.GetString(2), null, DateTimeStyles.RoundtripKind),
+                CoveredUntilUtc = DateTime.Parse(reader.GetString(3), null, DateTimeStyles.RoundtripKind),
+                MessageCount = reader.GetInt32(4),
+                SummaryText = reader.GetString(5),
+                CreatedUtc = DateTime.Parse(reader.GetString(6), null, DateTimeStyles.RoundtripKind),
+                IsCompacted = reader.GetInt32(7) != 0
+            });
+        }
+
+        return results;
+    }
+
+    public async Task<int> GetSummaryCountAsync(CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM conversation_summaries";
+
+        var result = await command.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    // ── Summary snapshot integration (C-043) ──────────────────────────────
+
+    public async Task<(int CompactedCount, int RetainedCount)> GetSummaryCompactionCountsAsync(CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                SUM(CASE WHEN is_compacted = 1 THEN 1 ELSE 0 END) AS compacted_count,
+                SUM(CASE WHEN is_compacted = 0 THEN 1 ELSE 0 END) AS retained_count
+            FROM conversation_summaries
+            """;
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            var compacted = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
+            var retained = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+            return (compacted, retained);
+        }
+
+        return (0, 0);
+    }
+
+    public async Task<(int CompactedConversations, int NonCompactedConversations)> GetConversationCompactionCountsAsync(CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                SUM(CASE WHEN is_compacted = 1 THEN 1 ELSE 0 END) AS compacted,
+                SUM(CASE WHEN is_compacted = 0 THEN 1 ELSE 0 END) AS non_compacted
+            FROM conversations
+            """;
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            var compacted = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
+            var nonCompacted = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+            return (compacted, nonCompacted);
+        }
+
+        return (0, 0);
+    }
+
+    public async Task<DateTime?> GetMostRecentSummaryUtcAsync(CancellationToken ct = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(ct);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT MAX(created_utc) FROM conversation_summaries";
+
+        var result = await command.ExecuteScalarAsync(ct);
+        if (result is string s && !string.IsNullOrWhiteSpace(s))
+        {
+            return DateTime.Parse(s, null, DateTimeStyles.RoundtripKind);
+        }
+
+        return null;
     }
 
     private static string BuildFtsContent(Conversation conversation)

@@ -16,4 +16,13 @@ public sealed partial class OptimizationPage : Page
 
     private async void OnAnalyzeOptimizationClick(object sender, RoutedEventArgs e) =>
         await Session.AnalyzeOptimizationAsync();
+
+    private async void OnPreviewOptimizationFixClick(object sender, RoutedEventArgs e) =>
+        await Session.PreviewOptimizationFixAsync();
+
+    private async void OnApplyOptimizationFixClick(object sender, RoutedEventArgs e) =>
+        await Session.ApplyOptimizationFixAsync();
+
+    private async void OnRevertOptimizationFixClick(object sender, RoutedEventArgs e) =>
+        await Session.RevertOptimizationFixAsync();
 }

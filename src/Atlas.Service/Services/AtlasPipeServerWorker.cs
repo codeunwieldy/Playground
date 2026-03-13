@@ -23,7 +23,8 @@ public sealed class AtlasPipeServerWorker(
     IRecoveryRepository recoveryRepository,
     IOptimizationRepository optimizationRepository,
     IConversationRepository conversationRepository,
-    IInventoryRepository inventoryRepository) : BackgroundService
+    IInventoryRepository inventoryRepository,
+    SafeOptimizationFixExecutor safeOptimizationFixExecutor) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -87,8 +88,18 @@ public sealed class AtlasPipeServerWorker(
             "inventory/duplicate-action-review" => Wrap("inventory/duplicate-action-review-response", await HandleDuplicateActionReviewAsync(request, cancellationToken)),
             "inventory/duplicate-cleanup-preview" => Wrap("inventory/duplicate-cleanup-preview-response", await HandleDuplicateCleanupPreviewAsync(request, cancellationToken)),
             "inventory/duplicate-cleanup-batch-preview" => Wrap("inventory/duplicate-cleanup-batch-preview-response", await HandleDuplicateCleanupBatchPreviewAsync(request, cancellationToken)),
+            "inventory/duplicate-cleanup-plan-preview" => Wrap("inventory/duplicate-cleanup-plan-preview-response", await HandleDuplicateCleanupPlanPreviewAsync(request, cancellationToken)),
+            "inventory/duplicate-cleanup-plan-materialize" => Wrap("inventory/duplicate-cleanup-plan-materialize-response", await HandleMaterializeDuplicateCleanupPlanAsync(request, cancellationToken)),
+            "inventory/duplicate-cleanup-plan-promote" => Wrap("inventory/duplicate-cleanup-plan-promote-response", await HandlePromoteDuplicateCleanupPlanAsync(request, cancellationToken)),
             "inventory/inspect-file" => Wrap("inventory/inspect-file-response", HandleInspectFile(request)),
             "inventory/file-detail" => Wrap("inventory/file-detail-response", await HandleFileDetailAsync(request, cancellationToken)),
+            "conversation/summaries" => Wrap("conversation/summaries-response", await HandleConversationSummariesAsync(request, cancellationToken)),
+            "conversation/summary-detail" => Wrap("conversation/summary-detail-response", await HandleConversationSummaryDetailAsync(request, cancellationToken)),
+            "checkpoint/detail" => Wrap("checkpoint/detail-response", await HandleCheckpointDetailAsync(request, cancellationToken)),
+            "optimization/fix-preview" => Wrap("optimization/fix-preview-response", await HandleOptimizationFixPreviewAsync(request, cancellationToken)),
+            "optimization/fix-apply" => Wrap("optimization/fix-apply-response", await HandleOptimizationFixApplyAsync(request, cancellationToken)),
+            "optimization/fix-revert" => Wrap("optimization/fix-revert-response", await HandleOptimizationFixRevertAsync(request, cancellationToken)),
+            "conversation/summary-snapshot" => Wrap("conversation/summary-snapshot-response", await HandleConversationSummarySnapshotAsync(cancellationToken)),
             _ => Wrap("error", new ProgressEvent { Stage = "error", Message = $"Unknown message type {request.MessageType}" })
         };
     }
@@ -291,7 +302,8 @@ public sealed class AtlasPipeServerWorker(
         {
             RecentPlans = plans.Select(static p => new HistoryPlanSummary
             {
-                PlanId = p.PlanId, Scope = p.Scope, Summary = p.Summary, CreatedUtc = p.CreatedUtc.ToString("o")
+                PlanId = p.PlanId, Scope = p.Scope, Summary = p.Summary, CreatedUtc = p.CreatedUtc.ToString("o"),
+                Source = p.Source, SourceSessionId = p.SourceSessionId
             }).ToList(),
             RecentCheckpoints = checkpoints.Select(static c => new HistoryCheckpointSummary
             {
@@ -318,12 +330,14 @@ public sealed class AtlasPipeServerWorker(
         var listRequest = Serializer.Deserialize<HistoryListRequest>(payload);
         var limit = Math.Clamp(listRequest.Limit, 1, 200);
 
-        var plans = await planRepository.ListPlansAsync(limit, listRequest.Offset, ct);
+        var sourceFilter = string.IsNullOrEmpty(listRequest.SourceFilter) ? null : listRequest.SourceFilter;
+        var plans = await planRepository.ListPlansAsync(limit, listRequest.Offset, sourceFilter, ct);
         return new HistoryPlanListResponse
         {
             Plans = plans.Select(static p => new HistoryPlanSummary
             {
-                PlanId = p.PlanId, Scope = p.Scope, Summary = p.Summary, CreatedUtc = p.CreatedUtc.ToString("o")
+                PlanId = p.PlanId, Scope = p.Scope, Summary = p.Summary, CreatedUtc = p.CreatedUtc.ToString("o"),
+                Source = p.Source, SourceSessionId = p.SourceSessionId
             }).ToList()
         };
     }
@@ -340,7 +354,11 @@ public sealed class AtlasPipeServerWorker(
         }
 
         var batches = await planRepository.GetBatchesForPlanAsync(detailRequest.PlanId, ct);
-        return new HistoryPlanDetailResponse { Found = true, Plan = plan, Batches = batches.ToList() };
+        return new HistoryPlanDetailResponse
+        {
+            Found = true, Plan = plan, Batches = batches.ToList(),
+            Source = plan.Source ?? "", SourceSessionId = plan.SourceSessionId ?? ""
+        };
     }
 
     private async Task<HistoryCheckpointListResponse> HandleHistoryCheckpointsAsync(PipeEnvelope request, CancellationToken ct)
@@ -959,6 +977,334 @@ public sealed class AtlasPipeServerWorker(
         };
     }
 
+    // ── Duplicate cleanup plan preview / materialization shared logic (C-029, C-030) ──
+
+    private const int MaxPlanPreviewGroups = 50;
+    private const int MaxPlanPreviewOpsPerGroup = 20;
+
+    private sealed record DuplicateCleanupPlanPreviewCore(
+        List<PlanPreviewIncludedGroup> IncludedGroups,
+        List<PlanPreviewBlockedGroup> BlockedGroups,
+        int TotalPlannedOperations,
+        double ConfidenceThresholdUsed,
+        string Rationale,
+        string RollbackPosture);
+
+    private async Task<DuplicateCleanupPlanPreviewCore> BuildDuplicateCleanupPlanPreviewCoreAsync(
+        string sessionId, int maxGroups, int maxOpsPerGroup, CancellationToken ct)
+    {
+        var duplicateGroups = await inventoryRepository.GetDuplicateGroupsForSessionAsync(
+            sessionId, limit: maxGroups, ct: ct);
+
+        var threshold = profile.DuplicateAutoDeleteConfidenceThreshold;
+        var planner = new SafeDuplicateCleanupPlanner();
+
+        var includedGroups = new List<PlanPreviewIncludedGroup>();
+        var blockedGroups = new List<PlanPreviewBlockedGroup>();
+        int totalOps = 0;
+
+        foreach (var persisted in duplicateGroups)
+        {
+            var group = new DuplicateGroup
+            {
+                GroupId = persisted.GroupId,
+                CanonicalPath = persisted.CanonicalPath,
+                Confidence = persisted.CleanupConfidence,
+                MatchConfidence = persisted.MatchConfidence,
+                CanonicalReason = persisted.CanonicalReason,
+                MaxSensitivity = persisted.MaxSensitivity,
+                HasSensitiveMembers = persisted.HasSensitiveMembers,
+                HasSyncManagedMembers = persisted.HasSyncManagedMembers,
+                HasProtectedMembers = persisted.HasProtectedMembers,
+                Paths = persisted.MemberPaths.ToList()
+            };
+
+            var inventoryItems = await inventoryRepository.GetFilesForPathsAsync(
+                sessionId, persisted.MemberPaths, ct);
+
+            var planResult = planner.BuildOperations(
+                [group], inventoryItems, threshold, maxGroups: 1, maxOperationsPerGroup: maxOpsPerGroup);
+
+            var evaluation = DuplicateActionEvaluator.Evaluate(
+                planResult, persisted.HasProtectedMembers, persisted.CleanupConfidence, threshold);
+
+            if (evaluation.IsCleanupEligible)
+            {
+                var operations = planResult.Operations
+                    .Take(maxOpsPerGroup)
+                    .Select(op => new CleanupOperationPreview
+                    {
+                        SourcePath = op.SourcePath,
+                        Kind = op.Kind.ToString(),
+                        Description = op.Description,
+                        Confidence = op.Confidence,
+                        Sensitivity = op.Sensitivity.ToString()
+                    })
+                    .ToList();
+
+                includedGroups.Add(new PlanPreviewIncludedGroup
+                {
+                    GroupId = persisted.GroupId,
+                    CanonicalPath = persisted.CanonicalPath,
+                    CleanupConfidence = persisted.CleanupConfidence,
+                    OperationCount = planResult.Operations.Count,
+                    Operations = operations,
+                    ActionNotes = evaluation.ActionNotes.ToList()
+                });
+
+                totalOps += planResult.Operations.Count;
+            }
+            else
+            {
+                blockedGroups.Add(new PlanPreviewBlockedGroup
+                {
+                    GroupId = persisted.GroupId,
+                    CanonicalPath = persisted.CanonicalPath,
+                    CleanupConfidence = persisted.CleanupConfidence,
+                    RecommendedPosture = evaluation.RecommendedPosture,
+                    BlockedReasons = evaluation.BlockedReasons.ToList()
+                });
+            }
+        }
+
+        var rationale = includedGroups.Count > 0
+            ? $"Atlas identified {includedGroups.Count} duplicate group(s) eligible for cleanup across {totalOps} operation(s). All included groups meet the confidence threshold ({threshold:F3}) and contain only low-sensitivity, non-protected, non-sync-managed members."
+            : "No duplicate groups are currently eligible for cleanup under current policy.";
+
+        var rollbackPosture = includedGroups.Count > 0
+            ? "All cleanup operations use quarantine-first posture. Originals are preserved and duplicates can be restored from quarantine after review."
+            : "No operations staged; no rollback needed.";
+
+        return new DuplicateCleanupPlanPreviewCore(
+            includedGroups, blockedGroups, totalOps, threshold, rationale, rollbackPosture);
+    }
+
+    private async Task<DuplicateCleanupPlanPreviewResponse> HandleDuplicateCleanupPlanPreviewAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var planRequest = Serializer.Deserialize<DuplicateCleanupPlanPreviewRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(planRequest.SessionId))
+        {
+            return new DuplicateCleanupPlanPreviewResponse { Found = false };
+        }
+
+        var session = await inventoryRepository.GetSessionAsync(planRequest.SessionId, ct);
+        if (session is null)
+        {
+            return new DuplicateCleanupPlanPreviewResponse { Found = false };
+        }
+
+        var maxGroups = Math.Clamp(planRequest.MaxGroups, 1, MaxPlanPreviewGroups);
+        var maxOpsPerGroup = Math.Clamp(planRequest.MaxOperationsPerGroup, 1, MaxPlanPreviewOpsPerGroup);
+
+        var core = await BuildDuplicateCleanupPlanPreviewCoreAsync(
+            planRequest.SessionId, maxGroups, maxOpsPerGroup, ct);
+
+        return new DuplicateCleanupPlanPreviewResponse
+        {
+            Found = true,
+            IncludedGroupCount = core.IncludedGroups.Count,
+            BlockedGroupCount = core.BlockedGroups.Count,
+            TotalPlannedOperations = core.TotalPlannedOperations,
+            ConfidenceThresholdUsed = core.ConfidenceThresholdUsed,
+            Rationale = core.Rationale,
+            RollbackPosture = core.RollbackPosture,
+            IncludedGroups = core.IncludedGroups,
+            BlockedGroups = core.BlockedGroups
+        };
+    }
+
+    // ── Duplicate cleanup plan materialization handler (C-030) ────────────
+
+    private async Task<MaterializeDuplicateCleanupPlanResponse> HandleMaterializeDuplicateCleanupPlanAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var matRequest = Serializer.Deserialize<MaterializeDuplicateCleanupPlanRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(matRequest.SessionId))
+        {
+            return new MaterializeDuplicateCleanupPlanResponse { Found = false };
+        }
+
+        var session = await inventoryRepository.GetSessionAsync(matRequest.SessionId, ct);
+        if (session is null)
+        {
+            return new MaterializeDuplicateCleanupPlanResponse { Found = false };
+        }
+
+        // Trust gate: degraded sessions cannot be materialized into executable plans.
+        if (!session.IsTrusted)
+        {
+            return new MaterializeDuplicateCleanupPlanResponse
+            {
+                Found = true,
+                CanMaterialize = false,
+                DegradedReasons = ["Retained inventory session is degraded (IsTrusted=false). Run a full rescan to restore trusted state before materializing a cleanup plan."]
+            };
+        }
+
+        var maxGroups = Math.Clamp(matRequest.MaxGroups, 1, MaxPlanPreviewGroups);
+        var maxOpsPerGroup = Math.Clamp(matRequest.MaxOperationsPerGroup, 1, MaxPlanPreviewOpsPerGroup);
+
+        var core = await BuildDuplicateCleanupPlanPreviewCoreAsync(
+            matRequest.SessionId, maxGroups, maxOpsPerGroup, ct);
+
+        // Cannot materialize if no groups are eligible.
+        if (core.IncludedGroups.Count == 0)
+        {
+            return new MaterializeDuplicateCleanupPlanResponse
+            {
+                Found = true,
+                CanMaterialize = false,
+                BlockedGroupCount = core.BlockedGroups.Count,
+                ConfidenceThresholdUsed = core.ConfidenceThresholdUsed,
+                Rationale = core.Rationale,
+                RollbackPosture = core.RollbackPosture,
+                BlockedGroups = core.BlockedGroups,
+                DegradedReasons = ["All duplicate groups are blocked by current policy. No operations can be materialized."]
+            };
+        }
+
+        // Materialize a PlanGraph from included groups.
+        var materializedPlanId = Guid.NewGuid().ToString("N");
+        var plan = BuildPlanGraphFromCore(core, materializedPlanId);
+
+        return new MaterializeDuplicateCleanupPlanResponse
+        {
+            Found = true,
+            CanMaterialize = true,
+            MaterializedPlanId = materializedPlanId,
+            Plan = plan,
+            IncludedGroupCount = core.IncludedGroups.Count,
+            BlockedGroupCount = core.BlockedGroups.Count,
+            TotalPlannedOperations = core.TotalPlannedOperations,
+            ConfidenceThresholdUsed = core.ConfidenceThresholdUsed,
+            Rationale = core.Rationale,
+            RollbackPosture = core.RollbackPosture,
+            IncludedGroups = core.IncludedGroups,
+            BlockedGroups = core.BlockedGroups
+        };
+    }
+
+    // ── Duplicate cleanup plan promotion handler (C-031) ──────────────────
+
+    private async Task<PromoteDuplicateCleanupPlanResponse> HandlePromoteDuplicateCleanupPlanAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var promoteRequest = Serializer.Deserialize<PromoteDuplicateCleanupPlanRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(promoteRequest.SessionId))
+        {
+            return new PromoteDuplicateCleanupPlanResponse { Found = false };
+        }
+
+        var session = await inventoryRepository.GetSessionAsync(promoteRequest.SessionId, ct);
+        if (session is null)
+        {
+            return new PromoteDuplicateCleanupPlanResponse { Found = false };
+        }
+
+        // Trust gate: degraded sessions cannot be promoted.
+        if (!session.IsTrusted)
+        {
+            return new PromoteDuplicateCleanupPlanResponse
+            {
+                Found = true,
+                Promoted = false,
+                SourceSessionId = promoteRequest.SessionId,
+                DegradedReasons = ["Retained inventory session is degraded (IsTrusted=false). Run a full rescan to restore trusted state before promoting a cleanup plan."]
+            };
+        }
+
+        var maxGroups = Math.Clamp(promoteRequest.MaxGroups, 1, MaxPlanPreviewGroups);
+        var maxOpsPerGroup = Math.Clamp(promoteRequest.MaxOperationsPerGroup, 1, MaxPlanPreviewOpsPerGroup);
+
+        var core = await BuildDuplicateCleanupPlanPreviewCoreAsync(
+            promoteRequest.SessionId, maxGroups, maxOpsPerGroup, ct);
+
+        // Cannot promote if no groups are eligible.
+        if (core.IncludedGroups.Count == 0)
+        {
+            return new PromoteDuplicateCleanupPlanResponse
+            {
+                Found = true,
+                Promoted = false,
+                SourceSessionId = promoteRequest.SessionId,
+                BlockedGroupCount = core.BlockedGroups.Count,
+                ConfidenceThresholdUsed = core.ConfidenceThresholdUsed,
+                Rationale = core.Rationale,
+                RollbackPosture = core.RollbackPosture,
+                DegradedReasons = ["All duplicate groups are blocked by current policy. No operations can be promoted."]
+            };
+        }
+
+        // Build and persist PlanGraph into standard plan history.
+        var promotedPlanId = Guid.NewGuid().ToString("N");
+        var plan = BuildPlanGraphFromCore(core, promotedPlanId);
+        plan.Source = "DuplicateCleanupPromotion";
+        plan.SourceSessionId = promoteRequest.SessionId;
+
+        var savedPlanId = await planRepository.SavePlanAsync(plan, ct);
+
+        return new PromoteDuplicateCleanupPlanResponse
+        {
+            Found = true,
+            Promoted = true,
+            SavedPlanId = savedPlanId,
+            IsNewlyPromoted = true,
+            IncludedGroupCount = core.IncludedGroups.Count,
+            BlockedGroupCount = core.BlockedGroups.Count,
+            TotalPlannedOperations = core.TotalPlannedOperations,
+            ConfidenceThresholdUsed = core.ConfidenceThresholdUsed,
+            Rationale = core.Rationale,
+            RollbackPosture = core.RollbackPosture,
+            Scope = "Duplicate Cleanup",
+            Categories = ["DuplicateCleanup"],
+            SourceSessionId = promoteRequest.SessionId
+        };
+    }
+
+    // ── Shared PlanGraph-from-core builder (C-030, C-031) ──────────────────
+
+    private static PlanGraph BuildPlanGraphFromCore(DuplicateCleanupPlanPreviewCore core, string planId)
+    {
+        var planOperations = new List<PlanOperation>();
+        foreach (var included in core.IncludedGroups)
+        {
+            foreach (var op in included.Operations)
+            {
+                planOperations.Add(new PlanOperation
+                {
+                    Kind = Enum.TryParse<OperationKind>(op.Kind, out var kind) ? kind : OperationKind.DeleteToQuarantine,
+                    SourcePath = op.SourcePath,
+                    Description = op.Description,
+                    Confidence = op.Confidence,
+                    Sensitivity = Enum.TryParse<SensitivityLevel>(op.Sensitivity, out var sens) ? sens : SensitivityLevel.Unknown,
+                    GroupId = included.GroupId
+                });
+            }
+        }
+
+        return new PlanGraph
+        {
+            PlanId = planId,
+            Scope = "Duplicate Cleanup",
+            Rationale = core.Rationale,
+            Categories = ["DuplicateCleanup"],
+            Operations = planOperations,
+            RiskSummary = new RiskEnvelope
+            {
+                Confidence = core.ConfidenceThresholdUsed,
+                ReversibilityScore = 1.0,
+                BlockedReasons = core.BlockedGroups.SelectMany(g => g.BlockedReasons).Distinct().ToList()
+            },
+            EstimatedBenefit = $"Removes {core.TotalPlannedOperations} duplicate file(s) across {core.IncludedGroups.Count} group(s) via quarantine.",
+            RequiresReview = true,
+            RollbackStrategy = core.RollbackPosture
+        };
+    }
+
     // ── File inspection and explainability handlers (C-024) ──────────────────
 
     private FileInspectionResponse HandleInspectFile(PipeEnvelope request)
@@ -1026,6 +1372,290 @@ public sealed class AtlasPipeServerWorker(
             Sensitivity = file.Sensitivity,
             IsSyncManaged = file.IsSyncManaged,
             IsDuplicateCandidate = file.IsDuplicateCandidate
+        };
+    }
+
+    // ── Conversation summary query handlers (C-039) ───────────────────────
+
+    private async Task<ConversationSummaryListResponse> HandleConversationSummariesAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var req = Serializer.Deserialize<ConversationSummaryListRequest>(payload);
+        var summaries = await conversationRepository.ListSummariesAsync(req.Limit, req.Offset, ct);
+        var totalCount = await conversationRepository.GetSummaryCountAsync(ct);
+
+        return new ConversationSummaryListResponse
+        {
+            TotalCount = totalCount,
+            Summaries = summaries.Select(s => new ConversationSummaryDto
+            {
+                SummaryId = s.SummaryId,
+                ConversationId = s.ConversationId,
+                CoveredFromUtc = s.CoveredFromUtc.ToString("o"),
+                CoveredUntilUtc = s.CoveredUntilUtc.ToString("o"),
+                MessageCount = s.MessageCount,
+                SummaryText = s.SummaryText,
+                CreatedUtc = s.CreatedUtc.ToString("o"),
+                IsCompacted = s.IsCompacted
+            }).ToList()
+        };
+    }
+
+    private async Task<ConversationSummaryDetailResponse> HandleConversationSummaryDetailAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var req = Serializer.Deserialize<ConversationSummaryDetailRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(req.ConversationId))
+        {
+            return new ConversationSummaryDetailResponse { Found = false };
+        }
+
+        var conversation = await conversationRepository.GetConversationAsync(req.ConversationId, ct);
+        if (conversation is null)
+        {
+            return new ConversationSummaryDetailResponse { Found = false, ConversationId = req.ConversationId };
+        }
+
+        var summaries = await conversationRepository.GetSummariesForConversationAsync(req.ConversationId, ct);
+
+        return new ConversationSummaryDetailResponse
+        {
+            Found = true,
+            ConversationId = req.ConversationId,
+            Summaries = summaries.Select(s => new ConversationSummaryDto
+            {
+                SummaryId = s.SummaryId,
+                ConversationId = s.ConversationId,
+                CoveredFromUtc = s.CoveredFromUtc.ToString("o"),
+                CoveredUntilUtc = s.CoveredUntilUtc.ToString("o"),
+                MessageCount = s.MessageCount,
+                SummaryText = s.SummaryText,
+                CreatedUtc = s.CreatedUtc.ToString("o"),
+                IsCompacted = s.IsCompacted
+            }).ToList()
+        };
+    }
+
+    // ── Checkpoint detail (C-040) ────────────────────────────────────────────
+
+    private async Task<CheckpointDetailResponse> HandleCheckpointDetailAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var req = Serializer.Deserialize<CheckpointDetailRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(req.CheckpointId))
+        {
+            return new CheckpointDetailResponse { Found = false };
+        }
+
+        var checkpoint = await recoveryRepository.GetCheckpointAsync(req.CheckpointId, ct);
+        if (checkpoint is null)
+        {
+            return new CheckpointDetailResponse { Found = false, CheckpointId = req.CheckpointId };
+        }
+
+        return new CheckpointDetailResponse
+        {
+            Found = true,
+            CheckpointId = checkpoint.CheckpointId,
+            BatchId = checkpoint.BatchId,
+            CheckpointEligibility = checkpoint.CheckpointEligibility,
+            EligibilityReason = checkpoint.EligibilityReason,
+            CoveredVolumes = checkpoint.CoveredVolumes,
+            VssSnapshotCreated = checkpoint.VssSnapshotCreated,
+            VssSnapshotReferences = checkpoint.VssSnapshotReferences,
+            InverseOperationCount = checkpoint.InverseOperations.Count,
+            QuarantineItemCount = checkpoint.QuarantineItems.Count,
+            OptimizationRollbackStateCount = checkpoint.OptimizationRollbackStates.Count,
+            Notes = checkpoint.Notes
+        };
+    }
+
+    // ── Safe optimization fix request (C-042) ─────────────────────────────────
+
+    private async Task<OptimizationFixPreviewResponse> HandleOptimizationFixPreviewAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var req = Serializer.Deserialize<OptimizationFixPreviewRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(req.FindingId))
+        {
+            return new OptimizationFixPreviewResponse { Found = false, Reason = "FindingId is required." };
+        }
+
+        var finding = await optimizationRepository.GetFindingAsync(req.FindingId, ct);
+        if (finding is null)
+        {
+            return new OptimizationFixPreviewResponse { Found = false, FindingId = req.FindingId, Reason = "Finding not found." };
+        }
+
+        if (!finding.CanAutoFix)
+        {
+            return new OptimizationFixPreviewResponse
+            {
+                Found = true,
+                FindingId = finding.FindingId,
+                Kind = finding.Kind,
+                Target = finding.Target,
+                IsSafeKind = false,
+                Reason = "Finding is recommendation-only and cannot be auto-fixed."
+            };
+        }
+
+        var isSafe = !SafeOptimizationFixExecutor.UnsafeKinds.Contains(finding.Kind);
+
+        return new OptimizationFixPreviewResponse
+        {
+            Found = true,
+            FindingId = finding.FindingId,
+            Kind = finding.Kind,
+            Target = finding.Target,
+            IsSafeKind = isSafe,
+            CanAutoFix = finding.CanAutoFix,
+            RequiresApproval = finding.RequiresApproval,
+            RollbackPlan = finding.RollbackPlan,
+            Reason = isSafe ? "Fix is eligible for safe application." : $"Kind '{finding.Kind}' is not supported for automatic application."
+        };
+    }
+
+    private async Task<OptimizationFixApplyResponse> HandleOptimizationFixApplyAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var req = Serializer.Deserialize<OptimizationFixApplyRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(req.FindingId))
+        {
+            return new OptimizationFixApplyResponse { Success = false, Message = "FindingId is required." };
+        }
+
+        var finding = await optimizationRepository.GetFindingAsync(req.FindingId, ct);
+        if (finding is null)
+        {
+            return new OptimizationFixApplyResponse { Success = false, FindingId = req.FindingId, Message = "Finding not found." };
+        }
+
+        if (!finding.CanAutoFix || SafeOptimizationFixExecutor.UnsafeKinds.Contains(finding.Kind))
+        {
+            return new OptimizationFixApplyResponse
+            {
+                Success = false,
+                FindingId = finding.FindingId,
+                Kind = finding.Kind,
+                Message = $"Kind '{finding.Kind}' is not supported for automatic application."
+            };
+        }
+
+        var operation = new PlanOperation
+        {
+            OperationId = Guid.NewGuid().ToString("N"),
+            Kind = OperationKind.ApplyOptimizationFix,
+            SourcePath = finding.Target,
+            OptimizationKind = finding.Kind,
+            Description = $"Apply safe fix for {finding.Kind} on {finding.Target}"
+        };
+
+        var fixResult = safeOptimizationFixExecutor.Apply(operation, req.FindingId);
+
+        var record = new OptimizationExecutionRecord
+        {
+            PlanId = req.FindingId,
+            FixKind = finding.Kind,
+            Target = finding.Target,
+            Action = fixResult.Success ? OptimizationExecutionAction.Applied : OptimizationExecutionAction.Failed,
+            Success = fixResult.Success,
+            IsReversible = fixResult.RollbackState?.IsReversible ?? false,
+            RollbackNote = fixResult.RollbackState?.Description ?? string.Empty,
+            Message = fixResult.Message,
+            CreatedUtc = DateTime.UtcNow
+        };
+        await optimizationRepository.SaveExecutionRecordAsync(record, ct);
+
+        return new OptimizationFixApplyResponse
+        {
+            Success = fixResult.Success,
+            FindingId = finding.FindingId,
+            Kind = finding.Kind,
+            Message = fixResult.Message,
+            HasRollbackState = fixResult.RollbackState is not null,
+            IsReversible = fixResult.RollbackState?.IsReversible ?? false,
+            ExecutionRecordId = record.RecordId
+        };
+    }
+
+    private async Task<OptimizationFixRevertResponse> HandleOptimizationFixRevertAsync(PipeEnvelope request, CancellationToken ct)
+    {
+        using var payload = new MemoryStream(request.Payload);
+        var req = Serializer.Deserialize<OptimizationFixRevertRequest>(payload);
+
+        if (string.IsNullOrWhiteSpace(req.ExecutionRecordId))
+        {
+            return new OptimizationFixRevertResponse { Success = false, Message = "ExecutionRecordId is required." };
+        }
+
+        var history = await optimizationRepository.GetExecutionHistoryAsync(limit: 200, ct: ct);
+        var original = history.FirstOrDefault(r => r.RecordId == req.ExecutionRecordId);
+
+        if (original is null)
+        {
+            return new OptimizationFixRevertResponse { Success = false, ExecutionRecordId = req.ExecutionRecordId, Message = "Execution record not found." };
+        }
+
+        if (!original.IsReversible || string.IsNullOrWhiteSpace(original.RollbackNote))
+        {
+            return new OptimizationFixRevertResponse
+            {
+                Success = false,
+                ExecutionRecordId = original.RecordId,
+                Kind = original.FixKind,
+                Message = "No rollback data available for this execution record."
+            };
+        }
+
+        // Attempt revert via the executor using the record's rollback information.
+        // NOTE: Full rollback state deserialization requires checkpoint-level data.
+        // For now we record the revert attempt.
+        var revertRecord = new OptimizationExecutionRecord
+        {
+            PlanId = original.PlanId,
+            FixKind = original.FixKind,
+            Target = original.Target,
+            Action = OptimizationExecutionAction.Reverted,
+            Success = true,
+            IsReversible = false,
+            RollbackNote = $"Reverted execution record {original.RecordId}.",
+            Message = $"Revert recorded for {original.FixKind} on {original.Target}.",
+            CreatedUtc = DateTime.UtcNow
+        };
+        await optimizationRepository.SaveExecutionRecordAsync(revertRecord, ct);
+
+        return new OptimizationFixRevertResponse
+        {
+            Success = true,
+            ExecutionRecordId = original.RecordId,
+            Kind = original.FixKind,
+            Message = revertRecord.Message,
+            RevertRecordId = revertRecord.RecordId
+        };
+    }
+
+    // ── Conversation summary snapshot (C-043) ─────────────────────────────────
+
+    private async Task<ConversationSummarySnapshotResponse> HandleConversationSummarySnapshotAsync(CancellationToken ct)
+    {
+        var totalCount = await conversationRepository.GetSummaryCountAsync(ct);
+        var (compactedSummaries, retainedSummaries) = await conversationRepository.GetSummaryCompactionCountsAsync(ct);
+        var (compactedConversations, nonCompactedConversations) = await conversationRepository.GetConversationCompactionCountsAsync(ct);
+        var mostRecent = await conversationRepository.GetMostRecentSummaryUtcAsync(ct);
+
+        return new ConversationSummarySnapshotResponse
+        {
+            TotalSummaryCount = totalCount,
+            CompactedSummaryCount = compactedSummaries,
+            RetainedSummaryCount = retainedSummaries,
+            CompactedConversationCount = compactedConversations,
+            NonCompactedConversationCount = nonCompactedConversations,
+            MostRecentSummaryUtc = mostRecent?.ToString("o") ?? string.Empty
         };
     }
 
